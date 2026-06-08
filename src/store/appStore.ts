@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import type {
   SpectrumData,
   BeStarObservation,
+  ObservationLogEntry,
   ClassificationResult,
   Project,
   ProjectData,
@@ -93,6 +94,7 @@ const persistProjects = (projects: Project[]): Promise<void> => {
 const createEmptyProjectData = (): ProjectData => ({
   spectra: [],
   beObservations: [],
+  observationLogs: [],
   currentSpectrumId: null,
   selectedTargetName: '',
   classificationResult: null,
@@ -134,6 +136,28 @@ const createSampleProjectData = (): ProjectData => {
     spectra: spectraList,
     currentSpectrumId: spectraList[2].id,
     beObservations: obsList,
+    observationLogs: obsList.map((obs, i) => ({
+      id: genId(),
+      targetName: obs.targetName,
+      observationDate: obs.observationDate,
+      observationTime: `${20 + (i % 3)}:${String(15 * i).padStart(2, '0')}`,
+      weatherCondition: i % 3 === 0 ? 'clear' : i % 3 === 1 ? 'partly_cloudy' : 'hazy',
+      equipmentStatus: i % 4 === 0 ? 'excellent' : 'good',
+      seeingQuality: i % 2 === 0 ? 'good' : 'fair',
+      temperature: 12 + Math.random() * 8,
+      humidity: 40 + Math.random() * 30,
+      exposureParams: {
+        exposureTime: 300,
+        numberOfExposures: 5,
+        binning: '2x2',
+        filter: 'Clear',
+        gain: 100,
+        temperature: -10,
+      },
+      notes: i % 2 === 0 ? '观测条件良好，光谱质量较高' : '有薄云，信噪比略低',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })),
     selectedTargetName: 'Gamma Cas',
     classificationResult: null,
     alertConfig: { ...DEFAULT_ALERT_CONFIG },
@@ -188,6 +212,7 @@ const migrateFromLocalStorage = async (): Promise<Project[] | null> => {
       data: {
         spectra: Array.isArray(p.data?.spectra) ? p.data.spectra : [],
         beObservations: Array.isArray(p.data?.beObservations) ? p.data.beObservations : [],
+        observationLogs: Array.isArray((p.data as any)?.observationLogs) ? (p.data as any).observationLogs : [],
         currentSpectrumId: p.data?.currentSpectrumId ?? null,
         selectedTargetName: p.data?.selectedTargetName ?? '',
         classificationResult: p.data?.classificationResult ?? null,
@@ -217,6 +242,7 @@ interface AppState {
   spectra: SpectrumData[];
   currentSpectrumId: string | null;
   beObservations: BeStarObservation[];
+  observationLogs: ObservationLogEntry[];
   selectedTargetName: string;
   classificationResult: ClassificationResult | null;
   alertConfig: AlertRuleConfig;
@@ -247,6 +273,10 @@ interface AppState {
   loadSampleData: () => void;
   clearAll: () => void;
 
+  addObservationLog: (log: Omit<ObservationLogEntry, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  updateObservationLog: (id: string, updates: Partial<ObservationLogEntry>) => void;
+  deleteObservationLog: (id: string) => void;
+
   toggleComparisonMode: () => void;
   toggleComparisonSpectrum: (id: string) => void;
   setComparisonSpectra: (ids: string[]) => void;
@@ -273,6 +303,7 @@ const syncProjectToState = (projects: Project[], projectId: string | null) => {
       spectra: [],
       currentSpectrumId: null as string | null,
       beObservations: [],
+      observationLogs: [] as ObservationLogEntry[],
       selectedTargetName: '',
       classificationResult: null as ClassificationResult | null,
       alertConfig: { ...DEFAULT_ALERT_CONFIG },
@@ -284,6 +315,7 @@ const syncProjectToState = (projects: Project[], projectId: string | null) => {
     spectra: project.data.spectra,
     currentSpectrumId: project.data.currentSpectrumId,
     beObservations: project.data.beObservations,
+    observationLogs: project.data.observationLogs ?? [],
     selectedTargetName: project.data.selectedTargetName,
     classificationResult: project.data.classificationResult,
     alertConfig: project.data.alertConfig ?? { ...DEFAULT_ALERT_CONFIG },
@@ -626,6 +658,7 @@ export const useAppStore = create<AppState>()(
               spectra: [],
               currentSpectrumId: null,
               beObservations: [],
+              observationLogs: [],
               classificationResult: null,
               alerts: [],
             })
@@ -634,6 +667,69 @@ export const useAppStore = create<AppState>()(
           return {
             projects: newProjects,
             alertEvaluations: [],
+            ...syncProjectToState(newProjects, state.currentProjectId),
+          };
+        }),
+
+      addObservationLog: (logData) =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const now = new Date().toISOString();
+          const newLog: ObservationLogEntry = {
+            ...logData,
+            id: genId(),
+            createdAt: now,
+            updatedAt: now,
+          };
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              observationLogs: [...data.observationLogs, newLog],
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
+            ...syncProjectToState(newProjects, state.currentProjectId),
+          };
+        }),
+
+      updateObservationLog: (id, updates) =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              observationLogs: data.observationLogs.map((log) =>
+                log.id === id ? { ...log, ...updates, updatedAt: new Date().toISOString() } : log
+              ),
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
+            ...syncProjectToState(newProjects, state.currentProjectId),
+          };
+        }),
+
+      deleteObservationLog: (id) =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              observationLogs: data.observationLogs.filter((log) => log.id !== id),
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
             ...syncProjectToState(newProjects, state.currentProjectId),
           };
         }),

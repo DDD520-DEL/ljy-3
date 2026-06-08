@@ -56,16 +56,6 @@ export interface TimeSeriesPoint {
   label?: string;
 }
 
-export interface ProjectData {
-  spectra: SpectrumData[];
-  beObservations: BeStarObservation[];
-  currentSpectrumId: string | null;
-  selectedTargetName: string;
-  classificationResult: ClassificationResult | null;
-  alertConfig: AlertRuleConfig;
-  alerts: BeStarAlert[];
-}
-
 export interface Project {
   id: string;
   name: string;
@@ -291,4 +281,44 @@ export interface StepResult {
   points: SpectrumPoint[];
   previewBefore: SpectrumPoint[];
   previewAfter: SpectrumPoint[];
+}
+
+export type WeatherCondition = 'clear' | 'partly_cloudy' | 'cloudy' | 'rainy' | 'snowy' | 'windy' | 'hazy';
+export type EquipmentStatus = 'excellent' | 'good' | 'fair' | 'poor' | 'malfunction';
+export type SeeingQuality = 'excellent' | 'good' | 'fair' | 'poor';
+
+export interface ExposureParams {
+  exposureTime?: number;
+  numberOfExposures?: number;
+  binning?: string;
+  filter?: string;
+  gain?: number;
+  temperature?: number;
+}
+
+export interface ObservationLogEntry {
+  id: string;
+  targetName: string;
+  observationDate: string;
+  observationTime?: string;
+  weatherCondition?: WeatherCondition;
+  equipmentStatus?: EquipmentStatus;
+  seeingQuality?: SeeingQuality;
+  temperature?: number;
+  humidity?: number;
+  exposureParams?: ExposureParams;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectData {
+  spectra: SpectrumData[];
+  beObservations: BeStarObservation[];
+  observationLogs: ObservationLogEntry[];
+  currentSpectrumId: string | null;
+  selectedTargetName: string;
+  classificationResult: ClassificationResult | null;
+  alertConfig: AlertRuleConfig;
+  alerts: BeStarAlert[];
 }
