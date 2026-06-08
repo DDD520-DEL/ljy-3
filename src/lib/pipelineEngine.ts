@@ -199,9 +199,30 @@ class PipelineEngine {
       nextTask.message = `处理完成: ${nextTask.spectrumName}`;
       nextTask.result = result;
     } catch (error) {
-      nextTask.status = 'failed';
-      nextTask.error = error instanceof Error ? error.message : String(error);
-      nextTask.message = `处理失败: ${nextTask.error}`;
+      const isCancelled = this.cancelledTasks.has(nextTask.id);
+      const pipeline = this.pipelines.get(nextTask.pipelineId);
+      if (isCancelled) {
+        nextTask.status = 'cancelled';
+        nextTask.message = '任务已取消';
+        if (pipeline) {
+          pipeline.overallStatus = 'cancelled';
+          pipeline.steps.forEach((s) => {
+            if (s.status === 'pending' || s.status === 'running') {
+              s.status = 'cancelled';
+            }
+          });
+          this.notifyPipeline(pipeline);
+        }
+      } else {
+        nextTask.status = 'failed';
+        nextTask.error = error instanceof Error ? error.message : String(error);
+        nextTask.message = `处理失败: ${nextTask.error}`;
+        if (pipeline) {
+          pipeline.overallStatus = 'failed';
+          pipeline.error = nextTask.error;
+          this.notifyPipeline(pipeline);
+        }
+      }
       nextTask.completedAt = new Date().toISOString();
     } finally {
       this.activeTaskId = null;
@@ -230,6 +251,17 @@ class PipelineEngine {
       pipeline.completedAt = new Date().toISOString();
       pipeline.finalPoints = currentPoints;
       this.notifyPipeline(pipeline);
+      const sorted = currentPoints.sort((a, b) => a.wavelength - b.wavelength);
+      return {
+        id: task.spectrumId,
+        name: task.spectrumName,
+        targetName: 'Unknown',
+        observationDate: new Date().toISOString().split('T')[0],
+        wavelengthMin: sorted[0]?.wavelength ?? 0,
+        wavelengthMax: sorted[sorted.length - 1]?.wavelength ?? 0,
+        points: sorted,
+        isNormalized: pipeline.config.normalization.enabled,
+      };
     }
 
     for (let i = 0; i < enabledSteps.length; i++) {
