@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Telescope,
   Database,
@@ -12,20 +12,15 @@ import SpectrumList from '@/components/SpectrumList';
 import SpectrumViewer from '@/components/SpectrumViewer';
 import ClassificationPanel from '@/components/ClassificationPanel';
 import BeStarMonitor from '@/components/BeStarMonitor';
+import ProjectSelector from '@/components/ProjectSelector';
 import { useAppStore } from '@/store/appStore';
 
 type TabType = 'classify' | 'monitor' | 'help';
 
 export default function Home() {
-  const { spectra, loadSampleData, clearAll } = useAppStore();
+  const { spectra, clearAll, currentProjectId, beObservations } = useAppStore();
   const [activeTab, setActiveTab] = useState<TabType>('classify');
   const [showInfoOpen, setShowInfoOpen] = useState(false);
-
-  useEffect(() => {
-    if (spectra.length === 0) {
-      loadSampleData();
-    }
-  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-200">
@@ -45,15 +40,16 @@ export default function Home() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <ProjectSelector />
             <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-800/60 border border-slate-700/60 text-[11px] text-slate-400">
               <Database className="w-3 h-3" />
-              {spectra.length} 光谱
+              {spectra.length} 光谱 · {beObservations.length} 观测
             </div>
             <button
               onClick={clearAll}
               className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] bg-slate-800/60 border border-slate-700/60 text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
             >
-              清空数据
+              清空当前项目数据
             </button>
             <button
               onClick={() => setShowInfoOpen(true)}

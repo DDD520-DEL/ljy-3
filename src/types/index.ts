@@ -55,3 +55,27 @@ export interface TimeSeriesPoint {
   value: number;
   label?: string;
 }
+
+export interface ProjectData {
+  spectra: SpectrumData[];
+  beObservations: BeStarObservation[];
+  currentSpectrumId: string | null;
+  selectedTargetName: string;
+  classificationResult: ClassificationResult | null;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+  data: ProjectData;
+}
+
+export interface WorkspaceState {
+  projects: Project[];
+  currentProjectId: string | null;
+  visibleLineCategories: { hydrogen: boolean; helium: boolean; metal: boolean };
+  normalizationRange: { min: number; max: number } | null;
+}
