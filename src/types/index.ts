@@ -79,3 +79,43 @@ export interface WorkspaceState {
   visibleLineCategories: { hydrogen: boolean; helium: boolean; metal: boolean };
   normalizationRange: { min: number; max: number } | null;
 }
+
+export type SyncStatus = 'idle' | 'syncing' | 'success' | 'error' | 'offline';
+
+export type SyncDirection = 'upload' | 'download' | 'both';
+
+export interface SyncProgress {
+  phase: 'connecting' | 'uploading' | 'downloading' | 'merging' | 'completed';
+  percent: number;
+  message: string;
+  currentItem?: string;
+  totalItems?: number;
+  processedItems?: number;
+}
+
+export interface SyncState {
+  status: SyncStatus;
+  direction: SyncDirection;
+  progress: SyncProgress | null;
+  error: string | null;
+  lastSyncAt: string | null;
+  pendingChanges: number;
+  isOnline: boolean;
+}
+
+export interface SyncLogEntry {
+  id: string;
+  timestamp: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  message: string;
+}
+
+export interface PendingSyncItem {
+  id: string;
+  entityType: 'project' | 'spectrum' | 'observation';
+  entityId: string;
+  operation: 'create' | 'update' | 'delete';
+  data: unknown;
+  createdAt: string;
+  retryCount: number;
+}

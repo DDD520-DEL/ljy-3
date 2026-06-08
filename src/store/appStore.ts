@@ -6,8 +6,12 @@ import type {
   ClassificationResult,
   Project,
   ProjectData,
+  SyncState,
+  SyncDirection,
 } from '@/types';
 import { generateSampleSpectrum, SPECTRAL_LINES, MK_TEMPLATES } from '@/data/astronomy';
+import { syncManager } from '@/lib/syncManager';
+import { localDB } from '@/lib/localStorage';
 
 const genId = () => Math.random().toString(36).substring(2, 9);
 
@@ -92,6 +96,10 @@ interface AppState {
   selectedTargetName: string;
   classificationResult: ClassificationResult | null;
 
+  syncState: SyncState;
+  isInitializing: boolean;
+  initError: string | null;
+
   createProject: (name: string, description?: string, withSampleData?: boolean) => void;
   switchProject: (projectId: string) => void;
   deleteProject: (projectId: string) => void;
@@ -108,6 +116,9 @@ interface AppState {
   setNormalizationRange: (range: { min: number; max: number } | null) => void;
   loadSampleData: () => void;
   clearAll: () => void;
+
+  startSync: (direction?: SyncDirection) => Promise<void>;
+  initializeData: () => Promise<void>;
 }
 
 const syncProjectToState = (projects: Project[], projectId: string | null) => {
@@ -141,8 +152,17 @@ const updateProjectData = (
       : p
   );
 
+const persistProjects = async (projects: Project[]) => {
+  try {
+    await localDB.saveProjects(projects);
+  } catch (e) {
+    console.error('保存项目到本地数据库失败:', e);
+  }
+};
+
 const defaultProjects = createDefaultProjects();
 const initialProjectId = defaultProjects[0]?.id || null;
+const initialSyncState = syncManager.getState();
 
 export const useAppStore = create<AppState>()(
   persist(
@@ -152,6 +172,10 @@ export const useAppStore = create<AppState>()(
       visibleLineCategories: { hydrogen: true, helium: true, metal: false },
       normalizationRange: null,
       ...syncProjectToState(defaultProjects, initialProjectId),
+
+      syncState: initialSyncState,
+      isInitializing: false,
+      initError: null,
 
       getCurrentProject: () => {
         const { projects, currentProjectId } = get();
@@ -170,6 +194,7 @@ export const useAppStore = create<AppState>()(
         };
         set((state) => {
           const newProjects = [...state.projects, newProject];
+          persistProjects(newProjects);
           return {
             projects: newProjects,
             currentProjectId: newProject.id,
@@ -179,10 +204,13 @@ export const useAppStore = create<AppState>()(
       },
 
       switchProject: (projectId) => {
-        set((state) => ({
-          currentProjectId: projectId,
-          ...syncProjectToState(state.projects, projectId),
-        }));
+        set((state) => {
+          const newState = {
+            currentProjectId: projectId,
+            ...syncProjectToState(state.projects, projectId),
+          };
+          return newState;
+        });
       },
 
       deleteProject: (projectId) => {
@@ -190,6 +218,7 @@ export const useAppStore = create<AppState>()(
           const filtered = state.projects.filter((p) => p.id !== projectId);
           const newCurrentId =
             state.currentProjectId === projectId ? filtered[0]?.id || null : state.currentProjectId;
+          persistProjects(filtered);
           return {
             projects: filtered,
             currentProjectId: newCurrentId,
@@ -199,13 +228,15 @@ export const useAppStore = create<AppState>()(
       },
 
       renameProject: (projectId, name, description) => {
-        set((state) => ({
-          projects: state.projects.map((p) =>
+        set((state) => {
+          const newProjects = state.projects.map((p) =>
             p.id === projectId
               ? { ...p, name, description, updatedAt: new Date().toISOString() }
               : p
-          ),
-        }));
+          );
+          persistProjects(newProjects);
+          return { projects: newProjects };
+        });
       },
 
       addSpectrum: (spectrum) =>
@@ -220,6 +251,7 @@ export const useAppStore = create<AppState>()(
               currentSpectrumId: data.currentSpectrumId || spectrum.id,
             })
           );
+          persistProjects(newProjects);
           return {
             projects: newProjects,
             ...syncProjectToState(newProjects, state.currentProjectId),
@@ -237,6 +269,7 @@ export const useAppStore = create<AppState>()(
               currentSpectrumId: id,
             })
           );
+          persistProjects(newProjects);
           return {
             projects: newProjects,
             ...syncProjectToState(newProjects, state.currentProjectId),
@@ -259,6 +292,7 @@ export const useAppStore = create<AppState>()(
               };
             }
           );
+          persistProjects(newProjects);
           return {
             projects: newProjects,
             ...syncProjectToState(newProjects, state.currentProjectId),
@@ -276,6 +310,7 @@ export const useAppStore = create<AppState>()(
               beObservations: [...data.beObservations, obs],
             })
           );
+          persistProjects(newProjects);
           return {
             projects: newProjects,
             ...syncProjectToState(newProjects, state.currentProjectId),
@@ -293,6 +328,7 @@ export const useAppStore = create<AppState>()(
               selectedTargetName: name,
             })
           );
+          persistProjects(newProjects);
           return {
             projects: newProjects,
             ...syncProjectToState(newProjects, state.currentProjectId),
@@ -310,6 +346,7 @@ export const useAppStore = create<AppState>()(
               classificationResult: result,
             })
           );
+          persistProjects(newProjects);
           return {
             projects: newProjects,
             ...syncProjectToState(newProjects, state.currentProjectId),
@@ -334,6 +371,7 @@ export const useAppStore = create<AppState>()(
             state.currentProjectId,
             () => createSampleProjectData()
           );
+          persistProjects(newProjects);
           return {
             projects: newProjects,
             ...syncProjectToState(newProjects, state.currentProjectId),
@@ -354,26 +392,84 @@ export const useAppStore = create<AppState>()(
               classificationResult: null,
             })
           );
+          persistProjects(newProjects);
           return {
             projects: newProjects,
             ...syncProjectToState(newProjects, state.currentProjectId),
           };
         }),
+
+      startSync: async (direction: SyncDirection = 'both') => {
+        const { projects } = get();
+        try {
+          const syncedProjects = await syncManager.sync(direction, projects);
+          set((state) => {
+            const newProjects = syncedProjects.length > 0 ? syncedProjects : state.projects;
+            const newCurrentId = newProjects.find((p) => p.id === state.currentProjectId)?.id || newProjects[0]?.id || null;
+            return {
+              projects: newProjects,
+              currentProjectId: newCurrentId,
+              syncState: syncManager.getState(),
+              ...syncProjectToState(newProjects, newCurrentId),
+            };
+          });
+        } catch (error) {
+          console.error('同步失败:', error);
+          set({ syncState: syncManager.getState() });
+        }
+      },
+
+      initializeData: async () => {
+        set({ isInitializing: true, initError: null });
+        try {
+          syncManager.onStateChange((newSyncState) => {
+            set({ syncState: newSyncState });
+          });
+
+          const localProjects = await syncManager.loadFromLocal();
+          
+          if (localProjects.length > 0) {
+            const newCurrentId = localProjects[0]?.id || null;
+            set((state) => ({
+              projects: localProjects,
+              currentProjectId: newCurrentId,
+              ...syncProjectToState(localProjects, newCurrentId),
+              syncState: syncManager.getState(),
+            }));
+          }
+
+          if (syncManager.getState().isOnline) {
+            try {
+              const syncedProjects = await syncManager.sync('both', get().projects);
+              set((state) => {
+                const projects = syncedProjects.length > 0 ? syncedProjects : state.projects;
+                const currentId = projects.find((p) => p.id === state.currentProjectId)?.id || projects[0]?.id || null;
+                return {
+                  projects,
+                  currentProjectId: currentId,
+                  ...syncProjectToState(projects, currentId),
+                  syncState: syncManager.getState(),
+                };
+              });
+            } catch (e) {
+              console.warn('初始同步失败，将使用本地数据:', e);
+            }
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : '初始化失败';
+          set({ initError: errorMessage });
+          console.error('初始化数据失败:', error);
+        } finally {
+          set({ isInitializing: false, syncState: syncManager.getState() });
+        }
+      },
     }),
     {
       name: 'stellar-spectra-workspace',
       partialize: (state) => ({
-        projects: state.projects,
-        currentProjectId: state.currentProjectId,
         visibleLineCategories: state.visibleLineCategories,
         normalizationRange: state.normalizationRange,
       }),
-      onRehydrateStorage: () => (state) => {
-        if (state) {
-          const synced = syncProjectToState(state.projects, state.currentProjectId);
-          Object.assign(state, synced);
-        }
-      },
     }
   )
 );

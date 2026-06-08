@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Telescope,
   Database,
@@ -6,6 +6,7 @@ import {
   LineChart,
   BookOpen,
   Info,
+  Loader2,
 } from 'lucide-react';
 import SpectrumImporter from '@/components/SpectrumImporter';
 import SpectrumList from '@/components/SpectrumList';
@@ -13,14 +14,19 @@ import SpectrumViewer from '@/components/SpectrumViewer';
 import ClassificationPanel from '@/components/ClassificationPanel';
 import BeStarMonitor from '@/components/BeStarMonitor';
 import ProjectSelector from '@/components/ProjectSelector';
+import SyncStatus from '@/components/SyncStatus';
 import { useAppStore } from '@/store/appStore';
 
 type TabType = 'classify' | 'monitor' | 'help';
 
 export default function Home() {
-  const { spectra, clearAll, currentProjectId, beObservations } = useAppStore();
+  const { spectra, clearAll, beObservations, isInitializing, initError, initializeData } = useAppStore();
   const [activeTab, setActiveTab] = useState<TabType>('classify');
   const [showInfoOpen, setShowInfoOpen] = useState(false);
+
+  useEffect(() => {
+    initializeData();
+  }, [initializeData]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-200">
@@ -40,6 +46,7 @@ export default function Home() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <SyncStatus />
             <ProjectSelector />
             <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-800/60 border border-slate-700/60 text-[11px] text-slate-400">
               <Database className="w-3 h-3" />
@@ -98,6 +105,20 @@ export default function Home() {
           </nav>
         </div>
       </header>
+
+      {isInitializing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-sm">
+          <div className="text-center p-8 rounded-2xl bg-slate-900/80 border border-slate-700 shadow-2xl max-w-md">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-cyan-500/30">
+              <Loader2 className="w-8 h-8 text-white animate-spin" />
+            </div>
+            <h3 className="text-lg font-semibold text-white mb-2">正在加载数据...</h3>
+            <p className="text-sm text-slate-400">
+              {initError ? `加载遇到问题: ${initError}` : '正在从本地和云端同步您的光谱数据'}
+            </p>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-[1800px] mx-auto px-4 sm:px-6 py-5">
         {activeTab === 'classify' && (

@@ -293,7 +293,7 @@ export default function ProjectSelector() {
             <div className="flex items-center justify-between text-[10px] text-slate-500">
               <span className="flex items-center gap-1">
                 <Sparkles className="w-3 h-3" />
-                数据自动保存到本地
+                本地持久化 + 云端同步
               </span>
               <span>共 {projects.length} 个项目</span>
             </div>
