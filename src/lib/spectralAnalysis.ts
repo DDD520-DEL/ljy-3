@@ -256,7 +256,8 @@ export const computeResiduals = (
 export const findDifferenceRegions = (
   residuals: ResidualPoint[],
   threshold: number = 0.05,
-  minGap: number = 10
+  minGap: number = 10,
+  spectrumIds: [string, string] = ['', '']
 ): DifferenceRegion[] => {
   if (residuals.length === 0) return [];
 
@@ -274,7 +275,7 @@ export const findDifferenceRegions = (
         end: residuals[endIdx].wavelength,
         maxDiff: currentMaxDiff,
         meanDiff: currentSumDiff / currentCount,
-        spectrumIds: ['', ''],
+        spectrumIds,
       });
     }
     currentStart = null;
@@ -304,7 +305,7 @@ export const findDifferenceRegions = (
   }
 
   if (currentStart !== null) {
-    finalizeRegion(residuals.length - 1);
+    finalizeRegion(residuals.length - 1 - gapCount);
   }
 
   return regions;

@@ -93,13 +93,9 @@ export default function SpectrumViewer({
           residuals: res,
           label: `${comparisonSpectra[i].name} − ${comparisonSpectra[j].name}`,
         });
-        const regions = findDifferenceRegions(res, comparisonMode.differenceThreshold);
-        regions.forEach((r) =>
-          allRegions.push({
-            ...r,
-            spectrumIds: [comparisonSpectra[i].id, comparisonSpectra[j].id],
-          })
-        );
+        const ids: [string, string] = [comparisonSpectra[i].id, comparisonSpectra[j].id];
+        const regions = findDifferenceRegions(res, comparisonMode.differenceThreshold, 10, ids);
+        allRegions.push(...regions);
       }
     }
     return { residualPairs: pairs, regions: allRegions };
@@ -425,7 +421,7 @@ export default function SpectrumViewer({
 
   useEffect(() => {
     const chart = chartRef.current;
-    if (!chart) return;
+    if (!chart || !chart.canvas) return;
     const onMove = (evt: any) => {
       const points = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
       if (points.length > 0) {
@@ -438,11 +434,14 @@ export default function SpectrumViewer({
       }
     };
     const onLeave = () => setHoverInfo(null);
-    chart.canvas.addEventListener('mousemove', onMove);
-    chart.canvas.addEventListener('mouseleave', onLeave);
+    const canvas = chart.canvas;
+    canvas.addEventListener('mousemove', onMove);
+    canvas.addEventListener('mouseleave', onLeave);
     return () => {
-      chart.canvas.removeEventListener('mousemove', onMove);
-      chart.canvas.removeEventListener('mouseleave', onLeave);
+      if (canvas) {
+        canvas.removeEventListener('mousemove', onMove);
+        canvas.removeEventListener('mouseleave', onLeave);
+      }
     };
   }, [chartRef.current]);
 

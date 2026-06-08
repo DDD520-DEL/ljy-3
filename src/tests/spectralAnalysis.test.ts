@@ -1,4 +1,4 @@
-import type { SpectrumPoint, ClassificationResult } from '@/types';
+import type { SpectrumPoint, ClassificationResult, ResidualPoint, SpectrumData, EWComparisonRow } from '@/types';
 import { SPECTRAL_LINES } from '@/data/astronomy';
 import {
   normalizeSpectrumSigmaClipping,
@@ -6,6 +6,11 @@ import {
   classifySpectrum,
   computeLineRatios,
   WAVELENGTHS,
+  interpolateIntensity,
+  computeResiduals,
+  computeResidualsInterpolated,
+  findDifferenceRegions,
+  buildEWComparisonTable,
 } from '@/lib/spectralAnalysis';
 
 const makePoint = (wl: number, int: number): SpectrumPoint => ({ wavelength: wl, intensity: int });
@@ -250,6 +255,282 @@ export const testNormalizeEmptyInput = () => {
   assert(resultSingle.length === 1, 'single point input preserved');
 };
 
+// ── interpolateIntensity ──────────────────────────────────────────────
+
+export const testInterpolateIntensityEmpty = () => {
+  const result = interpolateIntensity([], 5000);
+  assert(result === null, 'interpolate on empty array returns null');
+};
+
+export const testInterpolateIntensitySinglePoint = () => {
+  const pts = [makePoint(5000, 0.8)];
+  assertClose(interpolateIntensity(pts, 5000)!, 0.8, 1e-9, 'single point exact match');
+  assert(interpolateIntensity(pts, 4999) === null, 'single point below range returns null');
+  assert(interpolateIntensity(pts, 5001) === null, 'single point above range returns null');
+};
+
+export const testInterpolateIntensityExactMatch = () => {
+  const pts = [makePoint(4000, 0.5), makePoint(5000, 1.0), makePoint(6000, 0.7)];
+  assertClose(interpolateIntensity(pts, 4000)!, 0.5, 1e-9, 'exact match at first point');
+  assertClose(interpolateIntensity(pts, 5000)!, 1.0, 1e-9, 'exact match at middle point');
+  assertClose(interpolateIntensity(pts, 6000)!, 0.7, 1e-9, 'exact match at last point');
+};
+
+export const testInterpolateIntensityOutOfRange = () => {
+  const pts = [makePoint(4000, 0.5), makePoint(6000, 0.7)];
+  assert(interpolateIntensity(pts, 3999) === null, 'below range returns null');
+  assert(interpolateIntensity(pts, 6001) === null, 'above range returns null');
+};
+
+export const testInterpolateIntensityLinear = () => {
+  const pts = [makePoint(4000, 0.4), makePoint(6000, 0.8)];
+  assertClose(interpolateIntensity(pts, 5000)!, 0.6, 1e-9, 'midpoint linear interpolation');
+  assertClose(interpolateIntensity(pts, 4500)!, 0.5, 1e-9, '25% interpolation');
+  assertClose(interpolateIntensity(pts, 5500)!, 0.7, 1e-9, '75% interpolation');
+};
+
+// ── computeResiduals ──────────────────────────────────────────────────
+
+export const testComputeResidualsEmpty = () => {
+  const r1 = computeResiduals([], [makePoint(5000, 1)]);
+  const r2 = computeResiduals([makePoint(5000, 1)], []);
+  const r3 = computeResiduals([], []);
+  assert(r1.length === 0, 'empty first arg returns empty');
+  assert(r2.length === 0, 'empty second arg returns empty');
+  assert(r3.length === 0, 'both empty returns empty');
+};
+
+export const testComputeResidualsNoOverlap = () => {
+  const a = [makePoint(4000, 1), makePoint(4002, 1)];
+  const b = [makePoint(5000, 1), makePoint(5002, 1)];
+  const res = computeResiduals(a, b);
+  assert(res.length === 0, 'no overlapping wavelengths returns empty');
+};
+
+export const testComputeResidualsFullOverlap = () => {
+  const a = [makePoint(5000, 1.0), makePoint(5002, 0.9), makePoint(5004, 0.8)];
+  const b = [makePoint(5000, 0.8), makePoint(5002, 0.9), makePoint(5004, 1.0)];
+  const res = computeResiduals(a, b);
+  assert(res.length === 3, 'full overlap returns all points');
+  assertClose(res[0].diff, 0.2, 1e-9, 'first diff positive');
+  assertClose(res[0].absDiff, 0.2, 1e-9, 'first absDiff');
+  assertClose(res[1].diff, 0.0, 1e-9, 'second diff zero');
+  assertClose(res[1].absDiff, 0.0, 1e-9, 'second absDiff');
+  assertClose(res[2].diff, -0.2, 1e-9, 'third diff negative');
+  assertClose(res[2].absDiff, 0.2, 1e-9, 'third absDiff');
+  assert(res[0].wavelength === 5000, 'wavelength preserved');
+};
+
+export const testComputeResidualsPartialOverlap = () => {
+  const a = [makePoint(4000, 1), makePoint(5000, 0.9), makePoint(6000, 0.8)];
+  const b = [makePoint(5000, 0.8), makePoint(6000, 0.7), makePoint(7000, 0.6)];
+  const res = computeResiduals(a, b);
+  assert(res.length === 2, 'partial overlap returns intersecting wavelengths');
+  assert(res[0].wavelength === 5000, 'first overlapping point');
+  assert(res[1].wavelength === 6000, 'second overlapping point');
+};
+
+// ── computeResidualsInterpolated ──────────────────────────────────────
+
+export const testComputeResidualsInterpolatedEmpty = () => {
+  assert(computeResidualsInterpolated([], []).length === 0, 'both empty');
+  assert(computeResidualsInterpolated([makePoint(5000, 1)], []).length === 0, 'second empty');
+  assert(computeResidualsInterpolated([], [makePoint(5000, 1)]).length === 0, 'first empty');
+};
+
+export const testComputeResidualsInterpolatedSameGrid = () => {
+  const a = [makePoint(5000, 1.0), makePoint(5002, 0.9)];
+  const b = [makePoint(5000, 0.8), makePoint(5002, 0.95)];
+  const res = computeResidualsInterpolated(a, b);
+  assert(res.length === 2, 'same grid returns all wavelengths');
+  assertClose(res[0].diff, 0.2, 1e-9, 'same grid diff 1');
+  assertClose(res[1].diff, -0.05, 1e-9, 'same grid diff 2');
+};
+
+export const testComputeResidualsInterpolatedDifferentGrid = () => {
+  const a = [makePoint(5000, 1.0), makePoint(5002, 0.8), makePoint(5004, 0.6)];
+  const b = [makePoint(5001, 0.9), makePoint(5003, 0.7), makePoint(5005, 0.5)];
+  const res = computeResidualsInterpolated(a, b);
+  assert(res.length >= 4, 'at least 4 wavelengths in overlap region');
+  const wls = res.map((r) => r.wavelength).sort((x, y) => x - y);
+  assert(wls.includes(5001), 'wl 5001 present');
+  assert(wls.includes(5002), 'wl 5002 present');
+  assert(wls.includes(5003), 'wl 5003 present');
+  assert(wls.includes(5004), 'wl 5004 present');
+  assert(Math.min(...wls) >= 5000, 'min wl >= 5000');
+  assert(Math.max(...wls) <= 5005, 'max wl <= 5005');
+};
+
+export const testComputeResidualsInterpolatedLinearAccuracy = () => {
+  const a = [makePoint(5000, 1.0), makePoint(5001, 1.0), makePoint(5002, 1.0)];
+  const b = [makePoint(5000, 0.6), makePoint(5002, 0.8)];
+  const res = computeResidualsInterpolated(a, b);
+  const mid = res.find((r) => r.wavelength === 5001);
+  assert(mid !== undefined, 'mid wavelength 5001 exists via a');
+  assertClose(mid.diff, 0.3, 1e-9, 'interpolated b at 5001 is 0.7, a is 1.0 → diff 0.3');
+};
+
+// ── findDifferenceRegions ─────────────────────────────────────────────
+
+const makeResidual = (wl: number, diff: number): ResidualPoint => ({
+  wavelength: wl,
+  diff,
+  absDiff: Math.abs(diff),
+});
+
+export const testFindDifferenceRegionsEmpty = () => {
+  const regions = findDifferenceRegions([]);
+  assert(regions.length === 0, 'empty residuals returns no regions');
+};
+
+export const testFindDifferenceRegionsNoneExceed = () => {
+  const residuals: ResidualPoint[] = [];
+  for (let wl = 5000; wl <= 5020; wl += 2) {
+    residuals.push(makeResidual(wl, 0.01));
+  }
+  const regions = findDifferenceRegions(residuals, 0.05);
+  assert(regions.length === 0, 'all below threshold returns no regions');
+};
+
+export const testFindDifferenceRegionsAllExceed = () => {
+  const residuals: ResidualPoint[] = [];
+  for (let wl = 5000; wl <= 5010; wl += 1) {
+    residuals.push(makeResidual(wl, 0.1));
+  }
+  const ids: [string, string] = ['sp-a', 'sp-b'];
+  const regions = findDifferenceRegions(residuals, 0.05, 10, ids);
+  assert(regions.length === 1, 'single continuous region');
+  assert(regions[0].start === 5000, 'region start');
+  assert(regions[0].end === 5010, 'region end');
+  assertClose(regions[0].maxDiff, 0.1, 1e-9, 'max diff');
+  assertClose(regions[0].meanDiff, 0.1, 1e-9, 'mean diff');
+  assert(regions[0].spectrumIds[0] === 'sp-a', 'spectrumId 0 propagated');
+  assert(regions[0].spectrumIds[1] === 'sp-b', 'spectrumId 1 propagated');
+};
+
+export const testFindDifferenceRegionsThresholdBoundary = () => {
+  const residuals = [
+    makeResidual(5000, 0.049),
+    makeResidual(5001, 0.05),
+    makeResidual(5002, 0.051),
+    makeResidual(5003, 0.049),
+  ];
+  const regions = findDifferenceRegions(residuals, 0.05, 10);
+  assert(regions.length === 1, 'boundary: >= threshold included');
+  assert(regions[0].start === 5001, 'start at first >= threshold');
+  assert(regions[0].end === 5002, 'end at last >= threshold');
+};
+
+export const testFindDifferenceRegionsGapMerging = () => {
+  const residuals: ResidualPoint[] = [];
+  for (let wl = 5000; wl <= 5004; wl += 1) residuals.push(makeResidual(wl, 0.1));
+  for (let wl = 5005; wl <= 5006; wl += 1) residuals.push(makeResidual(wl, 0.01));
+  for (let wl = 5007; wl <= 5010; wl += 1) residuals.push(makeResidual(wl, 0.1));
+  const regionsSmallGap = findDifferenceRegions(residuals, 0.05, 10);
+  assert(regionsSmallGap.length === 1, 'small gap merged into single region');
+
+  const residualsBigGap: ResidualPoint[] = [];
+  for (let wl = 5000; wl <= 5004; wl += 1) residualsBigGap.push(makeResidual(wl, 0.1));
+  for (let wl = 5005; wl <= 5020; wl += 1) residualsBigGap.push(makeResidual(wl, 0.01));
+  for (let wl = 5021; wl <= 5025; wl += 1) residualsBigGap.push(makeResidual(wl, 0.1));
+  const regionsBigGap = findDifferenceRegions(residualsBigGap, 0.05, 10);
+  assert(regionsBigGap.length === 2, 'big gap produces two separate regions');
+  assert(regionsBigGap[0].end < regionsBigGap[1].start, 'regions ordered and separate');
+};
+
+export const testFindDifferenceRegionsDefaultSpectrumIds = () => {
+  const residuals = [makeResidual(5000, 0.1), makeResidual(5001, 0.1)];
+  const regions = findDifferenceRegions(residuals, 0.05);
+  assert(regions[0].spectrumIds[0] === '', 'default empty id 0');
+  assert(regions[0].spectrumIds[1] === '', 'default empty id 1');
+};
+
+// ── buildEWComparisonTable ────────────────────────────────────────────
+
+const makeFakeSpectrum = (id: string, name: string, seed: number): SpectrumData => {
+  const pts: SpectrumPoint[] = [];
+  for (let wl = 3800; wl <= 7000; wl += 2) {
+    let intensity = 1.0;
+    for (const line of SPECTRAL_LINES) {
+      const d = Math.abs(wl - line.wavelength);
+      if (d < 50) {
+        const depth = (0.2 + seed * 0.05) * Math.exp(-(d * d) / (2 * 8 * 8));
+        intensity -= depth;
+      }
+    }
+    pts.push(makePoint(wl, intensity));
+  }
+  return {
+    id,
+    name,
+    targetName: 'Test',
+    observationDate: '2026-01-01',
+    wavelengthMin: 3800,
+    wavelengthMax: 7000,
+    points: pts,
+    isNormalized: true,
+  };
+};
+
+export const testBuildEWComparisonTableEmpty = () => {
+  const table = buildEWComparisonTable([]);
+  assert(Array.isArray(table), 'returns array');
+  for (const row of table) {
+    for (const val of Object.values(row.values)) {
+      assert(!isFinite(val) || val === 0, 'empty spectra produce zero or NaN values');
+    }
+  }
+};
+
+export const testBuildEWComparisonTableSingleSpectrum = () => {
+  const sp = makeFakeSpectrum('sp1', 'Spectrum A', 1);
+  const table = buildEWComparisonTable([sp]);
+  assert(table.length > 0, 'produces rows for default lines');
+  const ha = table.find((r) => r.lineLabel === 'Hα');
+  assert(ha !== undefined, 'Hα row present');
+  assert(ha!.wavelength === 6562.8, 'Hα wavelength correct');
+  assert('sp1' in ha!.values, 'contains spectrum id key');
+  assertClose(ha!.maxDiff, 0, 1e-9, 'single spectrum maxDiff is 0');
+  assert(isFinite(ha!.values['sp1']), 'EW value is finite');
+};
+
+export const testBuildEWComparisonTableMultipleSpectra = () => {
+  const sp1 = makeFakeSpectrum('sp1', 'A', 1);
+  const sp2 = makeFakeSpectrum('sp2', 'B', 2);
+  const sp3 = makeFakeSpectrum('sp3', 'C', 3);
+  const table = buildEWComparisonTable([sp1, sp2, sp3]);
+  for (const row of table) {
+    assert('sp1' in row.values, `${row.lineLabel} has sp1`);
+    assert('sp2' in row.values, `${row.lineLabel} has sp2`);
+    assert('sp3' in row.values, `${row.lineLabel} has sp3`);
+    assert(isFinite(row.values['sp1']), `${row.lineLabel} sp1 EW finite`);
+    assert(isFinite(row.values['sp2']), `${row.lineLabel} sp2 EW finite`);
+    assert(isFinite(row.values['sp3']), `${row.lineLabel} sp3 EW finite`);
+    assert(isFinite(row.meanValue), `${row.lineLabel} meanValue finite`);
+    assert(row.maxDiff >= 0, `${row.lineLabel} maxDiff non-negative`);
+  }
+};
+
+export const testBuildEWComparisonTableCustomLines = () => {
+  const sp = makeFakeSpectrum('sp1', 'A', 1);
+  const table = buildEWComparisonTable([sp], ['Hα', 'He I 4471']);
+  assert(table.length === 2, 'exactly two rows for custom labels');
+  assert(table[0].lineLabel === 'Hα', 'first row Hα');
+  assert(table[1].lineLabel === 'He I 4471', 'second row He I 4471');
+};
+
+export const testBuildEWComparisonTableAllLinesPresent = () => {
+  const sp = makeFakeSpectrum('sp1', 'A', 1);
+  const table = buildEWComparisonTable([sp]);
+  const expected = ['Hα', 'Hβ', 'Hγ', 'Hδ', 'He I 4471', 'He II 4686', 'Ca II K', 'Ca II H', 'Na I D1', 'Na I D2', 'Mg I b1', 'Mg I b2', 'Si II 6347'];
+  for (const label of expected) {
+    const row = table.find((r) => r.lineLabel === label);
+    assert(row !== undefined, `default line ${label} present`);
+    const line = SPECTRAL_LINES.find((l) => l.label === label);
+    assert(row!.wavelength === line!.wavelength, `wavelength matches for ${label}`);
+  }
+};
+
 export const runAllTests = (): { passed: string[]; failed: { name: string; error: string }[] } => {
   const tests = [
     { name: 'wavelengthConstantsMatchSpectralLines', fn: testWavelengthConstantsMatchSpectralLines },
@@ -265,6 +546,35 @@ export const runAllTests = (): { passed: string[]; failed: { name: string; error
     { name: 'classifyAType', fn: testClassifyAType },
     { name: 'lineRatiosFinite', fn: testLineRatiosFinite },
     { name: 'normalizeEmptyInput', fn: testNormalizeEmptyInput },
+    // interpolateIntensity
+    { name: 'interpolateIntensityEmpty', fn: testInterpolateIntensityEmpty },
+    { name: 'interpolateIntensitySinglePoint', fn: testInterpolateIntensitySinglePoint },
+    { name: 'interpolateIntensityExactMatch', fn: testInterpolateIntensityExactMatch },
+    { name: 'interpolateIntensityOutOfRange', fn: testInterpolateIntensityOutOfRange },
+    { name: 'interpolateIntensityLinear', fn: testInterpolateIntensityLinear },
+    // computeResiduals
+    { name: 'computeResidualsEmpty', fn: testComputeResidualsEmpty },
+    { name: 'computeResidualsNoOverlap', fn: testComputeResidualsNoOverlap },
+    { name: 'computeResidualsFullOverlap', fn: testComputeResidualsFullOverlap },
+    { name: 'computeResidualsPartialOverlap', fn: testComputeResidualsPartialOverlap },
+    // computeResidualsInterpolated
+    { name: 'computeResidualsInterpolatedEmpty', fn: testComputeResidualsInterpolatedEmpty },
+    { name: 'computeResidualsInterpolatedSameGrid', fn: testComputeResidualsInterpolatedSameGrid },
+    { name: 'computeResidualsInterpolatedDifferentGrid', fn: testComputeResidualsInterpolatedDifferentGrid },
+    { name: 'computeResidualsInterpolatedLinearAccuracy', fn: testComputeResidualsInterpolatedLinearAccuracy },
+    // findDifferenceRegions
+    { name: 'findDifferenceRegionsEmpty', fn: testFindDifferenceRegionsEmpty },
+    { name: 'findDifferenceRegionsNoneExceed', fn: testFindDifferenceRegionsNoneExceed },
+    { name: 'findDifferenceRegionsAllExceed', fn: testFindDifferenceRegionsAllExceed },
+    { name: 'findDifferenceRegionsThresholdBoundary', fn: testFindDifferenceRegionsThresholdBoundary },
+    { name: 'findDifferenceRegionsGapMerging', fn: testFindDifferenceRegionsGapMerging },
+    { name: 'findDifferenceRegionsDefaultSpectrumIds', fn: testFindDifferenceRegionsDefaultSpectrumIds },
+    // buildEWComparisonTable
+    { name: 'buildEWComparisonTableEmpty', fn: testBuildEWComparisonTableEmpty },
+    { name: 'buildEWComparisonTableSingleSpectrum', fn: testBuildEWComparisonTableSingleSpectrum },
+    { name: 'buildEWComparisonTableMultipleSpectra', fn: testBuildEWComparisonTableMultipleSpectra },
+    { name: 'buildEWComparisonTableCustomLines', fn: testBuildEWComparisonTableCustomLines },
+    { name: 'buildEWComparisonTableAllLinesPresent', fn: testBuildEWComparisonTableAllLinesPresent },
   ];
 
   const passed: string[] = [];
