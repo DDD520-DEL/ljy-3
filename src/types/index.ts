@@ -39,6 +39,31 @@ export interface ClassificationResult {
   deviationRegions: { start: number; end: number; description: string }[];
 }
 
+export interface ManualClassificationResult extends ClassificationResult {
+  source: 'manual';
+  reviewerNotes?: string;
+  confirmedAt: string;
+}
+
+export type ClassificationSource = 'auto' | 'manual';
+
+export interface ArchivedClassification {
+  auto: ClassificationResult | null;
+  manual: ManualClassificationResult | null;
+}
+
+export interface ManualTuningState {
+  enabled: boolean;
+  selectedTemplateLabel: string | null;
+  subtypeOffset: number;
+  luminosityOffset: number;
+  showTemplateOverlay: boolean;
+  showDeviationHighlight: boolean;
+  deviationThreshold: number;
+  templateIntensityScale: number;
+  lockedResult: ManualClassificationResult | null;
+}
+
 export interface BeStarObservation {
   id: string;
   targetName: string;
@@ -319,6 +344,7 @@ export interface ProjectData {
   currentSpectrumId: string | null;
   selectedTargetName: string;
   classificationResult: ClassificationResult | null;
+  manualClassificationResult: ManualClassificationResult | null;
   alertConfig: AlertRuleConfig;
   alerts: BeStarAlert[];
 }

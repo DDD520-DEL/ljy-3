@@ -1,7 +1,9 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useAppStore } from '@/store/appStore';
-import { classifySpectrum, measureEquivalentWidth, computeLineRatios, WAVELENGTHS, buildEWComparisonTable } from '@/lib/spectralAnalysis';
-import { Sparkles, AlertTriangle, CheckCircle2, Star, Thermometer, Ruler, GitCompare, Table2 } from 'lucide-react';
+import { classifySpectrum, measureEquivalentWidth, computeLineRatios, WAVELENGTHS, buildEWComparisonTable, getRankedCandidateTemplates, createManualClassification, computeTemplateMatchScoreWithOffsets } from '@/lib/spectralAnalysis';
+import { MK_TEMPLATES } from '@/data/astronomy';
+import type { MKTemplate } from '@/types';
+import { Sparkles, AlertTriangle, CheckCircle2, Star, Thermometer, Ruler, GitCompare, Table2, Sliders, Lock, Unlock, RotateCcw, Save, UserCircle, Bot, ChevronDown, ChevronUp, Minus, Plus } from 'lucide-react';
 
 const SPECTRAL_TYPE_COLORS: Record<string, string> = {
   O: 'from-blue-400 to-blue-600',
@@ -46,9 +48,22 @@ export default function ClassificationPanel() {
     currentSpectrumId,
     spectra,
     classificationResult,
+    manualClassificationResult,
     setClassificationResult,
+    setManualClassificationResult,
+    clearManualClassificationResult,
     comparisonMode,
+    manualTuning,
+    toggleManualTuning,
+    setSelectedTemplateLabel,
+    setSubtypeOffset,
+    setLuminosityOffset,
+    setTemplateIntensityScale,
+    resetManualTuning,
   } = useAppStore();
+
+  const [showCandidateList, setShowCandidateList] = useState(false);
+  const [reviewerNotes, setReviewerNotes] = useState('');
 
   const current = spectra.find((s) => s.id === currentSpectrumId);
 
@@ -68,10 +83,52 @@ export default function ClassificationPanel() {
     return buildEWComparisonTable(comparisonSpectra);
   }, [comparisonSpectra, isComparisonActive]);
 
+  const candidateTemplates = useMemo(() => {
+    if (!current) return [] as { template: MKTemplate; score: number }[];
+    return getRankedCandidateTemplates(current.points, 8);
+  }, [current]);
+
+  const selectedTemplate = useMemo(() => {
+    if (!manualTuning.selectedTemplateLabel) return null;
+    return MK_TEMPLATES.find((t) => t.label === manualTuning.selectedTemplateLabel) || null;
+  }, [manualTuning.selectedTemplateLabel]);
+
+  const currentMatchScore = useMemo(() => {
+    if (!current || !selectedTemplate) return null;
+    return computeTemplateMatchScoreWithOffsets(
+      current.points,
+      selectedTemplate,
+      manualTuning.subtypeOffset,
+      manualTuning.luminosityOffset
+    );
+  }, [current, selectedTemplate, manualTuning.subtypeOffset, manualTuning.luminosityOffset]);
+
   const runClassification = () => {
     if (!current) return;
     const result = classifySpectrum(current.points);
     setClassificationResult(result);
+  };
+
+  const handleSelectTemplate = (templateLabel: string) => {
+    setSelectedTemplateLabel(templateLabel);
+    setShowCandidateList(false);
+  };
+
+  const handleConfirmManualClassification = () => {
+    if (!current || !selectedTemplate) return;
+    const result = createManualClassification(
+      selectedTemplate,
+      manualTuning.subtypeOffset,
+      manualTuning.luminosityOffset,
+      current.points,
+      reviewerNotes || undefined
+    );
+    setManualClassificationResult(result);
+  };
+
+  const handleClearManualResult = () => {
+    clearManualClassificationResult();
+    setReviewerNotes('');
   };
 
   const diagnostics = useMemo(() => {
@@ -97,14 +154,28 @@ export default function ClassificationPanel() {
           <Star className="w-4 h-4 text-yellow-400" />
           MK光谱分类
         </h3>
-        <button
-          onClick={runClassification}
-          disabled={!current}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium transition-all"
-        >
-          <Sparkles className="w-3.5 h-3.5" />
-          运行分类
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleManualTuning}
+            disabled={!current}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md font-medium transition-all ${
+              manualTuning.enabled
+                ? 'bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white'
+                : 'bg-slate-700/60 hover:bg-slate-700 text-slate-300 border border-slate-600/60'
+            } disabled:opacity-40 disabled:cursor-not-allowed`}
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            {manualTuning.enabled ? '调优中' : '手动调优'}
+          </button>
+          <button
+            onClick={runClassification}
+            disabled={!current}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium transition-all"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            运行分类
+          </button>
+        </div>
       </div>
 
       {isComparisonActive && ewComparisonTable && (
@@ -202,107 +273,419 @@ export default function ClassificationPanel() {
         </div>
       )}
 
-      {classificationResult && current ? (
-        <div className="space-y-4">
-          <div
-            className={`relative p-4 rounded-lg bg-gradient-to-br ${SPECTRAL_TYPE_COLORS[classificationResult.spectralType] || 'from-slate-600 to-slate-700'} shadow-lg overflow-hidden`}
-          >
-            <div className="absolute inset-0 bg-slate-900/30" />
-            <div className="relative">
-              <div className="flex items-baseline gap-2">
-                <span
-                  className={`text-4xl font-bold ${
-                    classificationResult.spectralType === 'O'
-                      ? 'text-blue-100'
-                      : classificationResult.spectralType === 'A' || classificationResult.spectralType === 'F'
-                      ? 'text-slate-900'
-                      : 'text-white'
-                  }`}
-                >
-                  {classificationResult.spectralType}
-                  <sub className="text-lg ml-0.5">{classificationResult.luminosityClass}</sub>
-                </span>
-                <span
-                  className={`text-sm font-medium ${
-                    classificationResult.spectralType === 'A' || classificationResult.spectralType === 'F'
-                      ? 'text-slate-800'
-                      : 'text-white/80'
-                  }`}
-                >
-                  {LUMINOSITY_NAMES[classificationResult.luminosityClass] || classificationResult.luminosityClass}
-                </span>
-              </div>
-              <div className="mt-2 flex items-center justify-between">
-                <div className="flex items-center gap-1 text-xs text-slate-800/80">
-                  <Thermometer className="w-3 h-3" />
-                  {TEMPERATURE_RANGES[classificationResult.spectralType]}
-                </div>
-                <div
-                  className={`text-xs font-mono px-2 py-0.5 rounded ${
-                    classificationResult.confidence > 70
-                      ? 'bg-emerald-900/40 text-emerald-300'
-                      : classificationResult.confidence > 40
-                      ? 'bg-amber-900/40 text-amber-300'
-                      : 'bg-red-900/40 text-red-300'
-                  }`}
-                >
-                  置信度 {classificationResult.confidence.toFixed(0)}%
-                </div>
-              </div>
+      {manualTuning.enabled && current && (
+        <div className="space-y-3 p-3 rounded-lg bg-violet-900/20 border border-violet-800/40">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold text-violet-300 flex items-center gap-1.5">
+              <Sliders className="w-3.5 h-3.5" />
+              手动调优模式
             </div>
+            <button
+              onClick={() => {
+                resetManualTuning();
+                toggleManualTuning();
+              }}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-slate-700/50 hover:bg-slate-700 text-slate-300 transition-colors"
+            >
+              <RotateCcw className="w-3 h-3" />
+              退出调优
+            </button>
           </div>
 
           <div className="space-y-2">
-            <div className="text-xs font-medium text-slate-400">识别的光谱特征</div>
-            <div className="flex flex-wrap gap-1.5">
-              {classificationResult.matchedFeatures.length > 0 ? (
-                classificationResult.matchedFeatures.map((f) => (
-                  <span
-                    key={f}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-emerald-900/30 text-emerald-300 border border-emerald-800/50"
-                  >
-                    <CheckCircle2 className="w-3 h-3" />
-                    {f}
+            <button
+              onClick={() => setShowCandidateList(!showCandidateList)}
+              disabled={candidateTemplates.length === 0}
+              className="w-full flex items-center justify-between px-3 py-2 rounded-md bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 text-xs text-left transition-colors disabled:opacity-50"
+            >
+              <span className="flex items-center gap-2">
+                <Star className="w-3 h-3 text-yellow-400" />
+                {selectedTemplate ? (
+                  <span>
+                    已选模板: <span className="text-violet-300 font-semibold">{selectedTemplate.label}</span>
+                    <span className="text-slate-500 ml-1">({selectedTemplate.colorTemp} K)</span>
                   </span>
-                ))
-              ) : (
-                <span className="text-xs text-slate-500">未检测到显著特征</span>
-              )}
-            </div>
+                ) : (
+                  <span className="text-slate-400">选择候选模板光谱型</span>
+                )}
+              </span>
+              {showCandidateList ? <ChevronUp className="w-3 h-3 text-slate-400" /> : <ChevronDown className="w-3 h-3 text-slate-400" />}
+            </button>
+
+            {showCandidateList && candidateTemplates.length > 0 && (
+              <div className="max-h-48 overflow-y-auto rounded-md border border-slate-700/60 bg-slate-900/60">
+                {candidateTemplates.map(({ template, score }, idx) => {
+                  const isSelected = manualTuning.selectedTemplateLabel === template.label;
+                  return (
+                    <button
+                      key={template.label}
+                      onClick={() => handleSelectTemplate(template.label)}
+                      className={`w-full flex items-center justify-between px-3 py-2 text-xs text-left transition-colors border-b border-slate-800/50 last:border-b-0 ${
+                        isSelected
+                          ? 'bg-violet-900/40 text-violet-200'
+                          : 'hover:bg-slate-800/60 text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`w-5 h-5 flex items-center justify-center rounded text-[10px] font-bold ${
+                          idx === 0 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-slate-700/60 text-slate-400'
+                        }`}>
+                          {idx + 1}
+                        </span>
+                        <span className="font-mono font-semibold">{template.label}</span>
+                        <span className="text-slate-500 text-[10px]">{template.colorTemp} K</span>
+                      </div>
+                      <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                        score < 0.3 ? 'text-emerald-400 bg-emerald-900/30' : score < 0.6 ? 'text-amber-400 bg-amber-900/30' : 'text-red-400 bg-red-900/30'
+                      }`}>
+                        匹配度 {score.toFixed(3)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          {classificationResult.deviationRegions.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                与模板的偏差区域
+          {selectedTemplate && (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1.5 p-2 rounded-md bg-slate-800/40">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-slate-400">子型微调</span>
+                    <span className="text-[10px] font-mono text-violet-300">
+                      {manualTuning.subtypeOffset > 0 ? '+' : ''}{manualTuning.subtypeOffset.toFixed(1)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setSubtypeOffset(manualTuning.subtypeOffset - 0.5)}
+                      disabled={manualTuning.subtypeOffset <= -2}
+                      className="w-6 h-6 flex items-center justify-center rounded bg-slate-700/60 hover:bg-slate-700 text-slate-300 disabled:opacity-40"
+                    >
+                      <Minus className="w-3 h-3" />
+                    </button>
+                    <input
+                      type="range"
+                      min="-2"
+                      max="2"
+                      step="0.5"
+                      value={manualTuning.subtypeOffset}
+                      onChange={(e) => setSubtypeOffset(Number(e.target.value))}
+                      className="flex-1 accent-violet-500"
+                    />
+                    <button
+                      onClick={() => setSubtypeOffset(manualTuning.subtypeOffset + 0.5)}
+                      disabled={manualTuning.subtypeOffset >= 2}
+                      className="w-6 h-6 flex items-center justify-center rounded bg-slate-700/60 hover:bg-slate-700 text-slate-300 disabled:opacity-40"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 p-2 rounded-md bg-slate-800/40">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-slate-400">光度级微调</span>
+                    <span className="text-[10px] font-mono text-violet-300">
+                      {manualTuning.luminosityOffset > 0 ? '+' : ''}{manualTuning.luminosityOffset.toFixed(1)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setLuminosityOffset(manualTuning.luminosityOffset - 0.5)}
+                      disabled={manualTuning.luminosityOffset <= -2}
+                      className="w-6 h-6 flex items-center justify-center rounded bg-slate-700/60 hover:bg-slate-700 text-slate-300 disabled:opacity-40"
+                    >
+                      <Minus className="w-3 h-3" />
+                    </button>
+                    <input
+                      type="range"
+                      min="-2"
+                      max="2"
+                      step="0.5"
+                      value={manualTuning.luminosityOffset}
+                      onChange={(e) => setLuminosityOffset(Number(e.target.value))}
+                      className="flex-1 accent-violet-500"
+                    />
+                    <button
+                      onClick={() => setLuminosityOffset(manualTuning.luminosityOffset + 0.5)}
+                      disabled={manualTuning.luminosityOffset >= 2}
+                      className="w-6 h-6 flex items-center justify-center rounded bg-slate-700/60 hover:bg-slate-700 text-slate-300 disabled:opacity-40"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
               </div>
-              <ul className="space-y-1.5">
-                {classificationResult.deviationRegions.map((region, idx) => (
-                  <li
-                    key={idx}
-                    className="flex items-start gap-2 px-3 py-2 rounded-md bg-amber-900/20 border border-amber-800/40 text-xs text-amber-200"
-                  >
-                    <Ruler className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                    <div>
-                      <div className="font-medium">{region.description}</div>
-                      <div className="text-amber-300/70 font-mono text-[10px] mt-0.5">
-                        {region.start.toFixed(0)} – {region.end.toFixed(0)} Å
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+
+              <div className="space-y-1.5 p-2 rounded-md bg-slate-800/40">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-slate-400">模板强度缩放</span>
+                  <span className="text-[10px] font-mono text-violet-300">
+                    {manualTuning.templateIntensityScale.toFixed(2)}x
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="1.5"
+                  step="0.05"
+                  value={manualTuning.templateIntensityScale}
+                  onChange={(e) => setTemplateIntensityScale(Number(e.target.value))}
+                  className="w-full accent-violet-500"
+                />
+              </div>
+
+              {currentMatchScore !== null && (
+                <div className="flex items-center justify-between p-2 rounded-md bg-slate-800/40">
+                  <span className="text-[11px] text-slate-400">当前匹配得分</span>
+                  <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${
+                    currentMatchScore < 0.3 ? 'bg-emerald-900/40 text-emerald-300' : currentMatchScore < 0.6 ? 'bg-amber-900/40 text-amber-300' : 'bg-red-900/40 text-red-300'
+                  }`}>
+                    {currentMatchScore.toFixed(4)}
+                  </span>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] text-slate-400 block">复核备注（可选）</label>
+                <textarea
+                  value={reviewerNotes}
+                  onChange={(e) => setReviewerNotes(e.target.value)}
+                  placeholder="输入人工复核备注..."
+                  className="w-full px-2.5 py-2 text-xs rounded-md bg-slate-900/60 border border-slate-700/60 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-violet-600 resize-none"
+                  rows={2}
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleConfirmManualClassification}
+                  disabled={!selectedTemplate}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs rounded-md bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium transition-all"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  确认并锁定分类结果
+                </button>
+                <button
+                  onClick={() => {
+                    resetManualTuning();
+                    setReviewerNotes('');
+                  }}
+                  className="flex items-center gap-1 px-3 py-2 text-xs rounded-md bg-slate-700/60 hover:bg-slate-700 text-slate-300 transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  重置
+                </button>
+              </div>
+            </>
+          )}
+
+          {!selectedTemplate && (
+            <div className="p-4 text-center text-xs text-slate-500 rounded-md bg-slate-800/30 border border-dashed border-slate-700">
+              从上方候选列表中选择一个模板光谱型开始调优
             </div>
           )}
         </div>
-      ) : (
-        !isComparisonActive && (
-          <div className="p-6 text-center text-sm text-slate-500 rounded-lg bg-slate-800/30 border border-dashed border-slate-700">
-            点击"运行分类"按钮开始光谱型识别
-          </div>
-        )
       )}
+
+      <div className="space-y-3">
+        {(classificationResult || manualClassificationResult) && current ? (
+          <div className="grid grid-cols-1 gap-3">
+            {classificationResult && (
+              <div className="space-y-2 p-3 rounded-lg bg-slate-800/30 border border-indigo-800/40">
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-indigo-300 mb-1">
+                  <Bot className="w-3.5 h-3.5" />
+                  自动分类结果
+                </div>
+                <div
+                  className={`relative p-3 rounded-lg bg-gradient-to-br ${SPECTRAL_TYPE_COLORS[classificationResult.spectralType] || 'from-slate-600 to-slate-700'} shadow overflow-hidden`}
+                >
+                  <div className="absolute inset-0 bg-slate-900/30" />
+                  <div className="relative">
+                    <div className="flex items-baseline gap-2">
+                      <span
+                        className={`text-3xl font-bold ${
+                          classificationResult.spectralType === 'O'
+                            ? 'text-blue-100'
+                            : classificationResult.spectralType === 'A' || classificationResult.spectralType === 'F'
+                            ? 'text-slate-900'
+                            : 'text-white'
+                        }`}
+                      >
+                        {classificationResult.spectralType}
+                        <sub className="text-base ml-0.5">{classificationResult.luminosityClass}</sub>
+                      </span>
+                      <span
+                        className={`text-xs font-medium ${
+                          classificationResult.spectralType === 'A' || classificationResult.spectralType === 'F'
+                            ? 'text-slate-800'
+                            : 'text-white/80'
+                        }`}
+                      >
+                        {LUMINOSITY_NAMES[classificationResult.luminosityClass] || classificationResult.luminosityClass}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex items-center justify-between">
+                      <div className="flex items-center gap-1 text-[10px] text-slate-800/80">
+                        <Thermometer className="w-2.5 h-2.5" />
+                        {TEMPERATURE_RANGES[classificationResult.spectralType]}
+                      </div>
+                      <div
+                        className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                          classificationResult.confidence > 70
+                            ? 'bg-emerald-900/40 text-emerald-300'
+                            : classificationResult.confidence > 40
+                            ? 'bg-amber-900/40 text-amber-300'
+                            : 'bg-red-900/40 text-red-300'
+                        }`}
+                      >
+                        {classificationResult.confidence.toFixed(0)}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                {classificationResult.matchedFeatures.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {classificationResult.matchedFeatures.map((f) => (
+                      <span
+                        key={f}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] bg-emerald-900/30 text-emerald-300 border border-emerald-800/50"
+                      >
+                        <CheckCircle2 className="w-2.5 h-2.5" />
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {manualClassificationResult && (
+              <div className="space-y-2 p-3 rounded-lg bg-violet-900/20 border border-violet-700/50">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-violet-300">
+                    <UserCircle className="w-3.5 h-3.5" />
+                    人工复核结果
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-violet-700/40 text-violet-200 text-[9px]">
+                      <Lock className="w-2.5 h-2.5" />
+                      已锁定
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleClearManualResult}
+                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-slate-700/50 hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition-colors"
+                  >
+                    <Unlock className="w-2.5 h-2.5" />
+                    清除
+                  </button>
+                </div>
+                <div
+                  className={`relative p-3 rounded-lg bg-gradient-to-br ${SPECTRAL_TYPE_COLORS[manualClassificationResult.spectralType] || 'from-slate-600 to-slate-700'} shadow overflow-hidden`}
+                >
+                  <div className="absolute inset-0 bg-violet-900/20" />
+                  <div className="relative">
+                    <div className="flex items-baseline gap-2">
+                      <span
+                        className={`text-3xl font-bold ${
+                          manualClassificationResult.spectralType === 'O'
+                            ? 'text-blue-100'
+                            : manualClassificationResult.spectralType === 'A' || manualClassificationResult.spectralType === 'F'
+                            ? 'text-slate-900'
+                            : 'text-white'
+                        }`}
+                      >
+                        {manualClassificationResult.spectralType}
+                        <sub className="text-base ml-0.5">{manualClassificationResult.luminosityClass}</sub>
+                      </span>
+                      <span
+                        className={`text-xs font-medium ${
+                          manualClassificationResult.spectralType === 'A' || manualClassificationResult.spectralType === 'F'
+                            ? 'text-slate-800'
+                            : 'text-white/80'
+                        }`}
+                      >
+                        {LUMINOSITY_NAMES[manualClassificationResult.luminosityClass] || manualClassificationResult.luminosityClass}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex items-center justify-between">
+                      <div className="flex items-center gap-1 text-[10px] text-slate-800/80">
+                        <Thermometer className="w-2.5 h-2.5" />
+                        {TEMPERATURE_RANGES[manualClassificationResult.spectralType]}
+                      </div>
+                      <div
+                        className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                          manualClassificationResult.confidence > 70
+                            ? 'bg-emerald-900/40 text-emerald-300'
+                            : manualClassificationResult.confidence > 40
+                            ? 'bg-amber-900/40 text-amber-300'
+                            : 'bg-red-900/40 text-red-300'
+                        }`}
+                      >
+                        {manualClassificationResult.confidence.toFixed(0)}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-[10px] text-slate-500 font-mono">
+                  确认于 {new Date(manualClassificationResult.confirmedAt).toLocaleString('zh-CN')}
+                </div>
+                {manualClassificationResult.reviewerNotes && (
+                  <div className="p-2 rounded bg-slate-800/50 border border-slate-700/50">
+                    <div className="text-[10px] text-slate-500 mb-0.5">复核备注</div>
+                    <div className="text-[11px] text-slate-300">{manualClassificationResult.reviewerNotes}</div>
+                  </div>
+                )}
+                {manualClassificationResult.deviationRegions.length > 0 && (
+                  <ul className="space-y-1">
+                    {manualClassificationResult.deviationRegions.slice(0, 3).map((region, idx) => (
+                      <li
+                        key={idx}
+                        className="flex items-start gap-1.5 px-2 py-1 rounded-md bg-violet-900/20 border border-violet-800/30 text-[10px] text-violet-200"
+                      >
+                        <Ruler className="w-2.5 h-2.5 mt-0.5 flex-shrink-0" />
+                        <div>
+                          <div className="font-medium">{region.description}</div>
+                          <div className="text-violet-300/70 font-mono text-[9px]">
+                            {region.start.toFixed(0)}–{region.end.toFixed(0)} Å
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {classificationResult && manualClassificationResult && (
+              <div className="flex items-center justify-center gap-2 p-2 rounded-md bg-slate-800/30 border border-slate-700/40">
+                <span className="text-[10px] text-slate-500">
+                  自动 vs 人工结果:{' '}
+                </span>
+                {classificationResult.spectralType === manualClassificationResult.spectralType &&
+                 classificationResult.luminosityClass === manualClassificationResult.luminosityClass ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
+                    <CheckCircle2 className="w-3 h-3" />
+                    一致
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 font-medium">
+                    <AlertTriangle className="w-3 h-3" />
+                    存在差异
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          !isComparisonActive && !manualTuning.enabled && (
+            <div className="p-6 text-center text-sm text-slate-500 rounded-lg bg-slate-800/30 border border-dashed border-slate-700">
+              点击"运行分类"按钮开始光谱型识别，或开启"手动调优"进行人工分类
+            </div>
+          )
+        )}
+      </div>
 
       {diagnostics && (
         <div className="pt-3 border-t border-slate-700/60 space-y-2">

@@ -1,4 +1,4 @@
-import type { SpectrumPoint, ClassificationResult, MKTemplate, ResidualPoint, DifferenceRegion, EWComparisonRow, SpectrumData } from '@/types';
+import type { SpectrumPoint, ClassificationResult, MKTemplate, ResidualPoint, DifferenceRegion, EWComparisonRow, SpectrumData, ManualClassificationResult } from '@/types';
 import { MK_TEMPLATES, SPECTRAL_LINES } from '@/data/astronomy';
 
 const getLineWavelength = (label: string): number | undefined =>
@@ -409,3 +409,256 @@ export const buildEWComparisonTable = (
 };
 
 export { computeLineRatios, WAVELENGTHS };
+
+const SPECTRAL_TYPES_ORDER = ['O', 'B', 'A', 'F', 'G', 'K', 'M'];
+const LUMINOSITY_CLASSES_ORDER = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+
+const getSpectralTypeIndex = (type: string): number => SPECTRAL_TYPES_ORDER.indexOf(type);
+const getLuminosityClassIndex = (lc: string): number => LUMINOSITY_CLASSES_ORDER.indexOf(lc);
+
+export const getAdjacentTemplates = (template: MKTemplate): { prev: MKTemplate | null; next: MKTemplate | null } => {
+  const sameType = MK_TEMPLATES.filter(
+    (t) => t.spectralType === template.spectralType && t.luminosityClass === template.luminosityClass
+  ).sort((a, b) => a.label.localeCompare(b.label));
+
+  const idx = sameType.findIndex((t) => t.label === template.label);
+  return {
+    prev: idx > 0 ? sameType[idx - 1] : null,
+    next: idx < sameType.length - 1 ? sameType[idx + 1] : null,
+  };
+};
+
+export const interpolateTemplateLineRatios = (
+  baseTemplate: MKTemplate,
+  subtypeOffset: number = 0,
+  luminosityOffset: number = 0
+): Record<string, number> => {
+  const ratios: Record<string, number> = { ...baseTemplate.lineRatios };
+
+  if (subtypeOffset !== 0) {
+    const allTemplates = MK_TEMPLATES.filter((t) => t.luminosityClass === baseTemplate.luminosityClass);
+    const sortedByType = allTemplates.sort(
+      (a, b) => getSpectralTypeIndex(a.spectralType) - getSpectralTypeIndex(b.spectralType)
+    );
+
+    const currentIdx = sortedByType.findIndex((t) => t.label === baseTemplate.label);
+    if (currentIdx >= 0) {
+      const targetIdxRaw = currentIdx + subtypeOffset;
+      const targetIdx = Math.max(0, Math.min(sortedByType.length - 1, Math.round(targetIdxRaw)));
+      const targetTemplate = sortedByType[targetIdx];
+
+      const t = Math.abs(targetIdxRaw - currentIdx);
+      for (const key of Object.keys(ratios)) {
+        const baseVal = ratios[key];
+        const targetVal = targetTemplate.lineRatios[key] ?? baseVal;
+        ratios[key] = baseVal + (targetVal - baseVal) * t;
+      }
+    }
+  }
+
+  if (luminosityOffset !== 0) {
+    const sameType = MK_TEMPLATES.filter((t) => t.spectralType === baseTemplate.spectralType);
+    const sortedByLum = sameType.sort(
+      (a, b) => getLuminosityClassIndex(a.luminosityClass) - getLuminosityClassIndex(b.luminosityClass)
+    );
+
+    const currentIdx = sortedByLum.findIndex((t) => t.label === baseTemplate.label);
+    if (currentIdx >= 0) {
+      const targetIdxRaw = currentIdx + luminosityOffset;
+      const targetIdx = Math.max(0, Math.min(sortedByLum.length - 1, Math.round(targetIdxRaw)));
+      const targetTemplate = sortedByLum[targetIdx];
+
+      const t = Math.abs(targetIdxRaw - currentIdx);
+      for (const key of Object.keys(ratios)) {
+        const baseVal = ratios[key];
+        const targetVal = targetTemplate.lineRatios[key] ?? baseVal;
+        ratios[key] = baseVal + (targetVal - baseVal) * t;
+      }
+    }
+  }
+
+  return ratios;
+};
+
+export const generateTemplateSpectrumPoints = (
+  template: MKTemplate,
+  wavelengthMin: number = 3800,
+  wavelengthMax: number = 7500,
+  wavelengthStep: number = 2,
+  subtypeOffset: number = 0,
+  luminosityOffset: number = 0,
+  intensityScale: number = 1.0
+): SpectrumPoint[] => {
+  const points: SpectrumPoint[] = [];
+  const lineRatios = interpolateTemplateLineRatios(template, subtypeOffset, luminosityOffset);
+  const temp = template.colorTemp;
+
+  for (let wl = wavelengthMin; wl <= wavelengthMax; wl += wavelengthStep) {
+    let intensity = 1.0;
+    const wlMicron = wl / 10000;
+    const bbTop = 2.898e-3 / temp * 1e4;
+    const bbRatio = Math.exp(-1.4388 / (wlMicron * temp / 10000)) / Math.exp(-1.4388 / (bbTop / 10000 * temp / 10000));
+    intensity = bbRatio;
+
+    for (const line of SPECTRAL_LINES) {
+      const dist = Math.abs(wl - line.wavelength);
+      if (dist < 50) {
+        let depth = 0;
+        if (line.category === 'hydrogen') {
+          if (template.spectralType === 'O') depth = 0.05;
+          else if (template.spectralType === 'B') depth = 0.15;
+          else if (template.spectralType === 'A') depth = line.label === 'Hα' ? 0.4 : 0.35;
+          else if (template.spectralType === 'F') depth = line.label === 'Hα' ? 0.25 : 0.2;
+          else if (template.spectralType === 'G') depth = line.label === 'Hα' ? 0.15 : 0.12;
+          else if (template.spectralType === 'K') depth = line.label === 'Hα' ? 0.08 : 0.06;
+          else if (template.spectralType === 'M') depth = line.label === 'Hα' ? 0.04 : 0.03;
+
+          if (lineRatios['Hα_depth'] !== undefined && line.label === 'Hα') {
+            depth = Math.max(0, Math.min(0.6, lineRatios['Hα_depth']));
+          }
+          if (lineRatios['Hβ_depth'] !== undefined && line.label === 'Hβ') {
+            depth = Math.max(0, Math.min(0.5, lineRatios['Hβ_depth']));
+          }
+          if (lineRatios['Hγ_depth'] !== undefined && line.label === 'Hγ') {
+            depth = Math.max(0, Math.min(0.5, lineRatios['Hγ_depth']));
+          }
+        } else if (line.category === 'helium') {
+          if (template.spectralType === 'O') depth = line.ion === 'II' ? 0.3 : 0.2;
+          else if (template.spectralType === 'B') depth = line.ion === 'II' ? 0.05 : 0.25;
+          else if (template.spectralType === 'A') depth = 0.03;
+
+          if (lineRatios['HeI4471_depth'] !== undefined && line.label === 'He I 4471') {
+            depth = Math.max(0, Math.min(0.4, lineRatios['HeI4471_depth']));
+          }
+          if (lineRatios['HeII4686_depth'] !== undefined && line.label === 'He II 4686') {
+            depth = Math.max(0, Math.min(0.5, lineRatios['HeII4686_depth']));
+          }
+        } else if (line.category === 'metal') {
+          if (template.spectralType === 'O' || template.spectralType === 'B') depth = 0.02;
+          else if (template.spectralType === 'A') depth = 0.05;
+          else if (template.spectralType === 'F') depth = 0.15;
+          else if (template.spectralType === 'G') depth = 0.25;
+          else if (template.spectralType === 'K') depth = 0.35;
+          else if (template.spectralType === 'M') depth = 0.45;
+
+          if (lineRatios['CaII_K_depth'] !== undefined && line.label === 'Ca II K') {
+            depth = Math.max(0, Math.min(0.6, lineRatios['CaII_K_depth']));
+          }
+          if (lineRatios['NaI_D_depth'] !== undefined && (line.label === 'Na I D1' || line.label === 'Na I D2')) {
+            depth = Math.max(0, Math.min(0.5, lineRatios['NaI_D_depth'] * (line.label === 'Na I D2' ? 1.1 : 0.9)));
+          }
+          if (lineRatios['MgI_b_depth'] !== undefined && (line.label === 'Mg I b1' || line.label === 'Mg I b2')) {
+            depth = Math.max(0, Math.min(0.5, lineRatios['MgI_b_depth'] * (line.label === 'Mg I b2' ? 1.1 : 0.9)));
+          }
+          if (lineRatios['SiII6347_depth'] !== undefined && line.label === 'Si II 6347') {
+            depth = Math.max(0, Math.min(0.4, lineRatios['SiII6347_depth']));
+          }
+        }
+        const sigma = 8;
+        const gaussian = Math.exp(-(dist * dist) / (2 * sigma * sigma));
+        intensity -= depth * gaussian;
+      }
+    }
+
+    intensity = Math.max(0.05, Math.min(1.5, intensity)) * intensityScale;
+    points.push({ wavelength: wl, intensity });
+  }
+
+  const maxInt = Math.max(...points.map((p) => p.intensity));
+  return points.map((p) => ({ wavelength: p.wavelength, intensity: p.intensity / maxInt }));
+};
+
+export const computeTemplateDeviationRegions = (
+  observedPoints: SpectrumPoint[],
+  templatePoints: SpectrumPoint[],
+  threshold: number = 0.05
+): DifferenceRegion[] => {
+  const residuals = computeResidualsInterpolated(observedPoints, templatePoints);
+  return findDifferenceRegions(residuals, threshold, 10, ['observed', 'template']);
+};
+
+export const computeTemplateMatchScoreWithOffsets = (
+  points: SpectrumPoint[],
+  template: MKTemplate,
+  subtypeOffset: number = 0,
+  luminosityOffset: number = 0
+): number => {
+  const measured = computeLineRatios(points);
+  const interpolatedRatios = interpolateTemplateLineRatios(template, subtypeOffset, luminosityOffset);
+
+  let totalDiff = 0;
+  let count = 0;
+  for (const [key, value] of Object.entries(interpolatedRatios)) {
+    if (measured[key] !== undefined && !isNaN(measured[key])) {
+      const diff = Math.abs(measured[key] - value);
+      const norm = Math.max(value, 0.1);
+      totalDiff += diff / norm;
+      count++;
+    }
+  }
+  return count > 0 ? totalDiff / count : Infinity;
+};
+
+export const getRankedCandidateTemplates = (
+  points: SpectrumPoint[],
+  topN: number = 5
+): { template: MKTemplate; score: number }[] => {
+  const measured = computeLineRatios(points);
+  const matches = MK_TEMPLATES.map((template) => ({
+    template,
+    score: calculateTemplateMatch(measured, template),
+  }));
+  matches.sort((a, b) => a.score - b.score);
+  return matches.slice(0, topN);
+};
+
+export const createManualClassification = (
+  template: MKTemplate,
+  subtypeOffset: number = 0,
+  luminosityOffset: number = 0,
+  observedPoints: SpectrumPoint[],
+  reviewerNotes?: string
+): ManualClassificationResult => {
+  const ratios = computeLineRatios(observedPoints);
+  const matchedFeatures: string[] = [];
+  if (ratios['HeII4686_depth'] > 0.05) matchedFeatures.push('强 He II 吸收线');
+  if (ratios['HeI4471_depth'] > 0.1) matchedFeatures.push('显著 He I 线');
+  if (ratios['Hα_depth'] > 0.2) matchedFeatures.push('强巴尔末线系');
+  if (ratios['CaII_K_depth'] > 0.1) matchedFeatures.push('Ca II H&K 线');
+  if (ratios['NaI_D_depth'] > 0.05) matchedFeatures.push('Na I D 线');
+  if (ratios['MgI_b_depth'] > 0.1) matchedFeatures.push('Mg I b 线');
+  if (ratios['SiII6347_depth'] > 0.05) matchedFeatures.push('Si II 线');
+
+  const score = computeTemplateMatchScoreWithOffsets(
+    observedPoints,
+    template,
+    subtypeOffset,
+    luminosityOffset
+  );
+  const confidence = Number((Math.max(0, Math.min(100, 100 - score * 50))).toFixed(1));
+
+  const templatePoints = generateTemplateSpectrumPoints(
+    template,
+    Math.min(...observedPoints.map((p) => p.wavelength)),
+    Math.max(...observedPoints.map((p) => p.wavelength)),
+    2,
+    subtypeOffset,
+    luminosityOffset
+  );
+  const deviationRegions = computeTemplateDeviationRegions(observedPoints, templatePoints).map((r) => ({
+    start: r.start,
+    end: r.end,
+    description: `与模板偏差区域 (max Δ=${r.maxDiff.toFixed(3)})`,
+  }));
+
+  return {
+    spectralType: template.spectralType,
+    luminosityClass: template.luminosityClass,
+    confidence,
+    matchedFeatures,
+    deviationRegions,
+    source: 'manual',
+    reviewerNotes,
+    confirmedAt: new Date().toISOString(),
+  };
+};

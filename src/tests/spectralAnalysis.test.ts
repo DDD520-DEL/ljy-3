@@ -1,5 +1,5 @@
-import type { SpectrumPoint, ClassificationResult, ResidualPoint, SpectrumData, EWComparisonRow } from '@/types';
-import { SPECTRAL_LINES } from '@/data/astronomy';
+import type { SpectrumPoint, ClassificationResult, ResidualPoint, SpectrumData, EWComparisonRow, MKTemplate, ManualClassificationResult } from '@/types';
+import { SPECTRAL_LINES, MK_TEMPLATES } from '@/data/astronomy';
 import {
   normalizeSpectrumSigmaClipping,
   measureEquivalentWidth,
@@ -11,6 +11,13 @@ import {
   computeResidualsInterpolated,
   findDifferenceRegions,
   buildEWComparisonTable,
+  getAdjacentTemplates,
+  interpolateTemplateLineRatios,
+  generateTemplateSpectrumPoints,
+  computeTemplateDeviationRegions,
+  computeTemplateMatchScoreWithOffsets,
+  getRankedCandidateTemplates,
+  createManualClassification,
 } from '@/lib/spectralAnalysis';
 
 const makePoint = (wl: number, int: number): SpectrumPoint => ({ wavelength: wl, intensity: int });
@@ -531,6 +538,186 @@ export const testBuildEWComparisonTableAllLinesPresent = () => {
   }
 };
 
+// ── getAdjacentTemplates ──────────────────────────────────────────────
+
+export const testGetAdjacentTemplates = () => {
+  const a0V = MK_TEMPLATES.find((t) => t.label === 'A0V');
+  assert(a0V !== undefined, 'A0V template exists');
+  const adj = getAdjacentTemplates(a0V!);
+  assert(adj.prev === null || adj.prev.spectralType === 'B', 'A0V prev should be null or B type');
+  assert(adj.next !== null, 'A0V should have next template');
+  assert(adj.next!.spectralType === 'A', 'A0V next should be A type');
+};
+
+const parseSubtypeFromLabel = (label: string): number => {
+  const match = label.match(/^[OBAFGKM](\d+)/);
+  return match ? parseInt(match[1], 10) : 0;
+};
+
+export const testGetAdjacentTemplatesEdge = () => {
+  const allSorted = [...MK_TEMPLATES].sort((a, b) => {
+    const typeOrder = ['O', 'B', 'A', 'F', 'G', 'K', 'M'];
+    const ti = typeOrder.indexOf(a.spectralType) - typeOrder.indexOf(b.spectralType);
+    if (ti !== 0) return ti;
+    const sa = parseSubtypeFromLabel(a.label);
+    const sb = parseSubtypeFromLabel(b.label);
+    if (sa !== sb) return sa - sb;
+    return a.luminosityClass.localeCompare(b.luminosityClass);
+  });
+  const first = allSorted[0];
+  const last = allSorted[allSorted.length - 1];
+  assert(getAdjacentTemplates(first).prev === null, 'first template has no prev');
+  assert(getAdjacentTemplates(last).next === null, 'last template has no next');
+};
+
+// ── interpolateTemplateLineRatios ─────────────────────────────────────
+
+export const testInterpolateTemplateLineRatiosZeroOffset = () => {
+  const template = MK_TEMPLATES[0];
+  const interpolated = interpolateTemplateLineRatios(template, 0, 0);
+  for (const key of Object.keys(template.lineRatios)) {
+    assertClose(interpolated[key] || 0, template.lineRatios[key] || 0, 1e-9, `zero offset preserves ${key}`);
+  }
+};
+
+export const testInterpolateTemplateLineRatiosFinite = () => {
+  for (const t of MK_TEMPLATES.slice(0, 5)) {
+    for (const so of [-1, 0, 1]) {
+      for (const lo of [-1, 0, 1]) {
+        const ratios = interpolateTemplateLineRatios(t, so * 0.5, lo * 0.5);
+        for (const v of Object.values(ratios)) {
+          assert(isFinite(v), `interpolated ratio finite for ${t.label} so=${so} lo=${lo}`);
+          assert(v >= 0, `interpolated ratio non-negative for ${t.label}`);
+        }
+      }
+    }
+  }
+};
+
+// ── generateTemplateSpectrumPoints ────────────────────────────────────
+
+export const testGenerateTemplateSpectrumPointsBasic = () => {
+  const template = MK_TEMPLATES.find((t) => t.label === 'A0V')!;
+  const points = generateTemplateSpectrumPoints(template, 4000, 7000, 10, 0, 0, 1.0);
+  assert(points.length > 0, 'generates non-empty points');
+  assert(points[0].wavelength >= 4000, 'first point >= wlMin');
+  assert(points[points.length - 1].wavelength <= 7000, 'last point <= wlMax');
+  for (const p of points) {
+    assert(isFinite(p.intensity), `intensity finite at ${p.wavelength}`);
+    assert(p.intensity >= 0, `intensity non-negative at ${p.wavelength}`);
+  }
+};
+
+export const testGenerateTemplateSpectrumPointsScale = () => {
+  const template = MK_TEMPLATES[0];
+  const base = generateTemplateSpectrumPoints(template, 5000, 5010, 5, 0, 0, 1.0);
+  const scaled = generateTemplateSpectrumPoints(template, 5000, 5010, 5, 0, 0, 1.5);
+  assert(base.length === scaled.length, 'same number of points');
+  for (let i = 0; i < base.length; i++) {
+    assert(base[i].wavelength === scaled[i].wavelength, 'wavelengths match');
+    assertClose(scaled[i].intensity, base[i].intensity * 1.5, 1e-6, `scaled intensity at ${base[i].wavelength}`);
+  }
+};
+
+// ── computeTemplateDeviationRegions ───────────────────────────────────
+
+export const testComputeTemplateDeviationRegionsIdentical = () => {
+  const points: SpectrumPoint[] = [];
+  for (let wl = 5000; wl <= 5100; wl += 2) points.push(makePoint(wl, 1.0));
+  const regions = computeTemplateDeviationRegions(points, points, 0.01);
+  assert(regions.length === 0, 'identical spectra produce no deviation regions');
+};
+
+export const testComputeTemplateDeviationRegionsThreshold = () => {
+  const observed: SpectrumPoint[] = [];
+  const template: SpectrumPoint[] = [];
+  for (let wl = 5000; wl <= 5100; wl += 2) {
+    observed.push(makePoint(wl, wl < 5040 || wl > 5060 ? 1.0 : 0.8));
+    template.push(makePoint(wl, 1.0));
+  }
+  const regions = computeTemplateDeviationRegions(observed, template, 0.05);
+  assert(regions.length >= 1, 'should detect deviation region');
+  if (regions.length > 0) {
+    assert(regions[0].start <= 5040, 'region start at or before dip');
+    assert(regions[0].end >= 5060, 'region end at or after dip');
+    assert(regions[0].maxDiff >= 0.15, 'max diff captures the 0.2 difference');
+  }
+};
+
+// ── computeTemplateMatchScoreWithOffsets ──────────────────────────────
+
+export const testComputeTemplateMatchScoreWithOffsetsFinite = () => {
+  const points: SpectrumPoint[] = [];
+  for (let wl = 4000; wl <= 7000; wl += 10) points.push(makePoint(wl, 1.0));
+  for (const t of MK_TEMPLATES.slice(0, 3)) {
+    const score = computeTemplateMatchScoreWithOffsets(points, t, 0, 0);
+    assert(isFinite(score), `score finite for ${t.label}`);
+    assert(score >= 0, `score non-negative for ${t.label}`);
+  }
+};
+
+// ── getRankedCandidateTemplates ───────────────────────────────────────
+
+export const testGetRankedCandidateTemplatesReturnsTopN = () => {
+  const points: SpectrumPoint[] = [];
+  for (let wl = 4000; wl <= 7000; wl += 20) points.push(makePoint(wl, 1.0));
+  const top3 = getRankedCandidateTemplates(points, 3);
+  assert(top3.length === 3, 'returns exactly top N');
+  const top5 = getRankedCandidateTemplates(points, 5);
+  assert(top5.length === 5, 'returns exactly top 5');
+  for (const { template, score } of top3) {
+    assert(isFinite(score), 'score is finite');
+    assert(template.label.length > 0, 'template has label');
+  }
+};
+
+export const testGetRankedCandidateTemplatesSorted = () => {
+  const points: SpectrumPoint[] = [];
+  for (let wl = 4000; wl <= 7000; wl += 20) points.push(makePoint(wl, 1.0));
+  const ranked = getRankedCandidateTemplates(points, 10);
+  for (let i = 1; i < ranked.length; i++) {
+    assert(ranked[i - 1].score >= ranked[i].score, `candidates sorted by score desc at ${i}`);
+  }
+};
+
+// ── createManualClassification ────────────────────────────────────────
+
+export const testCreateManualClassificationStructure = () => {
+  const template = MK_TEMPLATES.find((t) => t.label === 'G2V')!;
+  const points: SpectrumPoint[] = [];
+  for (let wl = 4000; wl <= 7000; wl += 20) points.push(makePoint(wl, 1.0));
+  const result = createManualClassification(template, 0, 0, points, '看起来正确');
+  assert(result.source === 'manual', 'source is manual');
+  assert(result.spectralType === 'G', 'spectralType matches template');
+  assert(result.luminosityClass === 'V', 'luminosityClass matches template');
+  assert(result.confidence >= 0 && result.confidence <= 100, 'confidence in range');
+  assert(result.reviewerNotes === '看起来正确', 'reviewerNotes preserved');
+  assert(typeof result.confirmedAt === 'string' && result.confirmedAt.length > 0, 'confirmedAt timestamp present');
+  assert(Array.isArray(result.matchedFeatures), 'matchedFeatures is array');
+  assert(Array.isArray(result.deviationRegions), 'deviationRegions is array');
+};
+
+export const testCreateManualClassificationNoNotes = () => {
+  const template = MK_TEMPLATES[0];
+  const points = [makePoint(5000, 1.0)];
+  const result = createManualClassification(template, 0, 0, points);
+  assert(result.reviewerNotes === undefined, 'no notes when not provided');
+  assert(result.source === 'manual', 'still marked as manual');
+};
+
+export const testCreateManualClassificationOffsetApplied = () => {
+  const a0v = MK_TEMPLATES.find((t) => t.label === 'A0V');
+  if (a0v) {
+    const points: SpectrumPoint[] = [];
+    for (let wl = 4000; wl <= 7000; wl += 20) points.push(makePoint(wl, 1.0));
+    const r1 = createManualClassification(a0v, 0, 0, points);
+    const r2 = createManualClassification(a0v, 0.5, 0, points);
+    assert(r1.confidence !== undefined, 'base confidence exists');
+    assert(r2.confidence !== undefined, 'offset confidence exists');
+    assert(typeof r1.confidence === 'number' && typeof r2.confidence === 'number', 'both confidences are numbers');
+  }
+};
+
 export const runAllTests = (): { passed: string[]; failed: { name: string; error: string }[] } => {
   const tests = [
     { name: 'wavelengthConstantsMatchSpectralLines', fn: testWavelengthConstantsMatchSpectralLines },
@@ -575,6 +762,27 @@ export const runAllTests = (): { passed: string[]; failed: { name: string; error
     { name: 'buildEWComparisonTableMultipleSpectra', fn: testBuildEWComparisonTableMultipleSpectra },
     { name: 'buildEWComparisonTableCustomLines', fn: testBuildEWComparisonTableCustomLines },
     { name: 'buildEWComparisonTableAllLinesPresent', fn: testBuildEWComparisonTableAllLinesPresent },
+    // getAdjacentTemplates
+    { name: 'getAdjacentTemplates', fn: testGetAdjacentTemplates },
+    { name: 'getAdjacentTemplatesEdge', fn: testGetAdjacentTemplatesEdge },
+    // interpolateTemplateLineRatios
+    { name: 'interpolateTemplateLineRatiosZeroOffset', fn: testInterpolateTemplateLineRatiosZeroOffset },
+    { name: 'interpolateTemplateLineRatiosFinite', fn: testInterpolateTemplateLineRatiosFinite },
+    // generateTemplateSpectrumPoints
+    { name: 'generateTemplateSpectrumPointsBasic', fn: testGenerateTemplateSpectrumPointsBasic },
+    { name: 'generateTemplateSpectrumPointsScale', fn: testGenerateTemplateSpectrumPointsScale },
+    // computeTemplateDeviationRegions
+    { name: 'computeTemplateDeviationRegionsIdentical', fn: testComputeTemplateDeviationRegionsIdentical },
+    { name: 'computeTemplateDeviationRegionsThreshold', fn: testComputeTemplateDeviationRegionsThreshold },
+    // computeTemplateMatchScoreWithOffsets
+    { name: 'computeTemplateMatchScoreWithOffsetsFinite', fn: testComputeTemplateMatchScoreWithOffsetsFinite },
+    // getRankedCandidateTemplates
+    { name: 'getRankedCandidateTemplatesReturnsTopN', fn: testGetRankedCandidateTemplatesReturnsTopN },
+    { name: 'getRankedCandidateTemplatesSorted', fn: testGetRankedCandidateTemplatesSorted },
+    // createManualClassification
+    { name: 'createManualClassificationStructure', fn: testCreateManualClassificationStructure },
+    { name: 'createManualClassificationNoNotes', fn: testCreateManualClassificationNoNotes },
+    { name: 'createManualClassificationOffsetApplied', fn: testCreateManualClassificationOffsetApplied },
   ];
 
   const passed: string[] = [];

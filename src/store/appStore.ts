@@ -14,6 +14,8 @@ import type {
   AlertRuleConfig,
   BeStarAlert,
   AlertEvaluationResult,
+  ManualTuningState,
+  ManualClassificationResult,
 } from '@/types';
 import { generateSampleSpectrum, SPECTRAL_LINES, MK_TEMPLATES } from '@/data/astronomy';
 import { syncManager } from '@/lib/syncManager';
@@ -98,6 +100,7 @@ const createEmptyProjectData = (): ProjectData => ({
   currentSpectrumId: null,
   selectedTargetName: '',
   classificationResult: null,
+  manualClassificationResult: null,
   alertConfig: { ...DEFAULT_ALERT_CONFIG },
   alerts: [],
 });
@@ -160,6 +163,7 @@ const createSampleProjectData = (): ProjectData => {
     })),
     selectedTargetName: 'Gamma Cas',
     classificationResult: null,
+    manualClassificationResult: null,
     alertConfig: { ...DEFAULT_ALERT_CONFIG },
     alerts: [],
   };
@@ -216,6 +220,7 @@ const migrateFromLocalStorage = async (): Promise<Project[] | null> => {
         currentSpectrumId: p.data?.currentSpectrumId ?? null,
         selectedTargetName: p.data?.selectedTargetName ?? '',
         classificationResult: p.data?.classificationResult ?? null,
+        manualClassificationResult: (p.data as any)?.manualClassificationResult ?? null,
         alertConfig: (p.data as any)?.alertConfig ?? { ...DEFAULT_ALERT_CONFIG },
         alerts: Array.isArray((p.data as any)?.alerts) ? (p.data as any).alerts : [],
       },
@@ -245,11 +250,13 @@ interface AppState {
   observationLogs: ObservationLogEntry[];
   selectedTargetName: string;
   classificationResult: ClassificationResult | null;
+  manualClassificationResult: ManualClassificationResult | null;
   alertConfig: AlertRuleConfig;
   alerts: BeStarAlert[];
   alertEvaluations: AlertEvaluationResult[];
 
   comparisonMode: ComparisonModeState;
+  manualTuning: ManualTuningState;
 
   syncState: SyncState;
   isInitializing: boolean;
@@ -268,6 +275,8 @@ interface AppState {
   addBeObservation: (obs: BeStarObservation) => void;
   setSelectedTarget: (name: string) => void;
   setClassificationResult: (result: ClassificationResult | null) => void;
+  setManualClassificationResult: (result: ManualClassificationResult | null) => void;
+  clearManualClassificationResult: () => void;
   toggleLineCategory: (category: 'hydrogen' | 'helium' | 'metal') => void;
   setNormalizationRange: (range: { min: number; max: number } | null) => void;
   loadSampleData: () => void;
@@ -284,6 +293,16 @@ interface AppState {
   setDifferenceThreshold: (threshold: number) => void;
   toggleShowResiduals: () => void;
   toggleShowDifferenceRegions: () => void;
+
+  toggleManualTuning: () => void;
+  setSelectedTemplateLabel: (label: string | null) => void;
+  setSubtypeOffset: (offset: number) => void;
+  setLuminosityOffset: (offset: number) => void;
+  setShowTemplateOverlay: (show: boolean) => void;
+  setShowDeviationHighlight: (show: boolean) => void;
+  setTuningDeviationThreshold: (threshold: number) => void;
+  setTemplateIntensityScale: (scale: number) => void;
+  resetManualTuning: () => void;
 
   updateAlertConfig: (config: Partial<AlertRuleConfig>) => void;
   runAlertEvaluation: () => void;
@@ -306,6 +325,7 @@ const syncProjectToState = (projects: Project[], projectId: string | null) => {
       observationLogs: [] as ObservationLogEntry[],
       selectedTargetName: '',
       classificationResult: null as ClassificationResult | null,
+      manualClassificationResult: null as ManualClassificationResult | null,
       alertConfig: { ...DEFAULT_ALERT_CONFIG },
       alerts: [] as BeStarAlert[],
       alertEvaluations: [] as AlertEvaluationResult[],
@@ -318,6 +338,7 @@ const syncProjectToState = (projects: Project[], projectId: string | null) => {
     observationLogs: project.data.observationLogs ?? [],
     selectedTargetName: project.data.selectedTargetName,
     classificationResult: project.data.classificationResult,
+    manualClassificationResult: project.data.manualClassificationResult ?? null,
     alertConfig: project.data.alertConfig ?? { ...DEFAULT_ALERT_CONFIG },
     alerts: project.data.alerts ?? [],
     alertEvaluations: [] as AlertEvaluationResult[],
@@ -354,6 +375,18 @@ export const useAppStore = create<AppState>()(
         differenceThreshold: 0.05,
         showResiduals: true,
         showDifferenceRegions: true,
+      },
+
+      manualTuning: {
+        enabled: false,
+        selectedTemplateLabel: null,
+        subtypeOffset: 0,
+        luminosityOffset: 0,
+        showTemplateOverlay: true,
+        showDeviationHighlight: true,
+        deviationThreshold: 0.05,
+        templateIntensityScale: 1.0,
+        lockedResult: null,
       },
 
       syncState: initialSyncState,
@@ -552,6 +585,127 @@ export const useAppStore = create<AppState>()(
           };
         }),
 
+      setManualClassificationResult: (result) =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              manualClassificationResult: result,
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
+            manualClassificationResult: result,
+            manualTuning: {
+              ...state.manualTuning,
+              lockedResult: result,
+            },
+          };
+        }),
+
+      clearManualClassificationResult: () =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              manualClassificationResult: null,
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
+            manualClassificationResult: null,
+            manualTuning: {
+              ...state.manualTuning,
+              lockedResult: null,
+            },
+          };
+        }),
+
+      toggleManualTuning: () =>
+        set((state) => ({
+          manualTuning: {
+            ...state.manualTuning,
+            enabled: !state.manualTuning.enabled,
+          },
+        })),
+
+      setSelectedTemplateLabel: (label) =>
+        set((state) => ({
+          manualTuning: {
+            ...state.manualTuning,
+            selectedTemplateLabel: label,
+            subtypeOffset: 0,
+            luminosityOffset: 0,
+          },
+        })),
+
+      setSubtypeOffset: (offset) =>
+        set((state) => ({
+          manualTuning: {
+            ...state.manualTuning,
+            subtypeOffset: Math.max(-2, Math.min(2, offset)),
+          },
+        })),
+
+      setLuminosityOffset: (offset) =>
+        set((state) => ({
+          manualTuning: {
+            ...state.manualTuning,
+            luminosityOffset: Math.max(-2, Math.min(2, offset)),
+          },
+        })),
+
+      setShowTemplateOverlay: (show) =>
+        set((state) => ({
+          manualTuning: {
+            ...state.manualTuning,
+            showTemplateOverlay: show,
+          },
+        })),
+
+      setShowDeviationHighlight: (show) =>
+        set((state) => ({
+          manualTuning: {
+            ...state.manualTuning,
+            showDeviationHighlight: show,
+          },
+        })),
+
+      setTuningDeviationThreshold: (threshold) =>
+        set((state) => ({
+          manualTuning: {
+            ...state.manualTuning,
+            deviationThreshold: Math.max(0.01, Math.min(0.2, threshold)),
+          },
+        })),
+
+      setTemplateIntensityScale: (scale) =>
+        set((state) => ({
+          manualTuning: {
+            ...state.manualTuning,
+            templateIntensityScale: Math.max(0.5, Math.min(1.5, scale)),
+          },
+        })),
+
+      resetManualTuning: () =>
+        set((state) => ({
+          manualTuning: {
+            ...state.manualTuning,
+            selectedTemplateLabel: null,
+            subtypeOffset: 0,
+            luminosityOffset: 0,
+            templateIntensityScale: 1.0,
+          },
+        })),
+
       toggleLineCategory: (category) =>
         set((state) => ({
           visibleLineCategories: {
@@ -660,6 +814,7 @@ export const useAppStore = create<AppState>()(
               beObservations: [],
               observationLogs: [],
               classificationResult: null,
+              manualClassificationResult: null,
               alerts: [],
             })
           );
@@ -667,6 +822,14 @@ export const useAppStore = create<AppState>()(
           return {
             projects: newProjects,
             alertEvaluations: [],
+            manualTuning: {
+              ...state.manualTuning,
+              enabled: false,
+              selectedTemplateLabel: null,
+              subtypeOffset: 0,
+              luminosityOffset: 0,
+              lockedResult: null,
+            },
             ...syncProjectToState(newProjects, state.currentProjectId),
           };
         }),

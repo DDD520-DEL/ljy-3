@@ -10,11 +10,16 @@ import {
   Tooltip,
   Legend,
 } from 'chart.js';
-import { SPECTRAL_LINES } from '@/data/astronomy';
+import { SPECTRAL_LINES, MK_TEMPLATES } from '@/data/astronomy';
 import { useAppStore } from '@/store/appStore';
-import type { SpectrumData, ClassificationResult, ResidualPoint, DifferenceRegion } from '@/types';
-import { computeResidualsInterpolated, findDifferenceRegions } from '@/lib/spectralAnalysis';
-import { Crosshair, Eye, EyeOff, ZoomIn, RotateCcw, GitCompare, AlertTriangle, TrendingUp } from 'lucide-react';
+import type { SpectrumData, ClassificationResult, ResidualPoint, DifferenceRegion, MKTemplate } from '@/types';
+import {
+  computeResidualsInterpolated,
+  findDifferenceRegions,
+  generateTemplateSpectrumPoints,
+  computeTemplateDeviationRegions,
+} from '@/lib/spectralAnalysis';
+import { Crosshair, Eye, EyeOff, ZoomIn, RotateCcw, GitCompare, AlertTriangle, TrendingUp, Sliders } from 'lucide-react';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip, Legend);
 
@@ -57,6 +62,7 @@ export default function SpectrumViewer({
     toggleShowResiduals,
     toggleShowDifferenceRegions,
     setDifferenceThreshold,
+    manualTuning,
   } = useAppStore();
 
   const comparisonSpectra = useMemo<SpectrumData[]>(() => {
@@ -101,6 +107,29 @@ export default function SpectrumViewer({
     return { residualPairs: pairs, regions: allRegions };
   }, [comparisonSpectra, isComparisonActive, comparisonMode.differenceThreshold]);
 
+  const templateOverlayData = useMemo(() => {
+    if (!manualTuning.enabled || !manualTuning.selectedTemplateLabel || !currentSpectrum) {
+      return { points: [] as { wavelength: number; intensity: number }[], template: null as MKTemplate | null, deviationRegions: [] as DifferenceRegion[] };
+    }
+    const template = MK_TEMPLATES.find((t) => t.label === manualTuning.selectedTemplateLabel);
+    if (!template) {
+      return { points: [], template: null, deviationRegions: [] };
+    }
+    const templatePoints = generateTemplateSpectrumPoints(
+      template,
+      currentSpectrum.wavelengthMin,
+      currentSpectrum.wavelengthMax,
+      2,
+      manualTuning.subtypeOffset,
+      manualTuning.luminosityOffset,
+      manualTuning.templateIntensityScale
+    );
+    const deviationRegions = manualTuning.showDeviationHighlight
+      ? computeTemplateDeviationRegions(currentSpectrum.points, templatePoints, manualTuning.deviationThreshold)
+      : [];
+    return { points: templatePoints, template, deviationRegions };
+  }, [manualTuning.enabled, manualTuning.selectedTemplateLabel, manualTuning.subtypeOffset, manualTuning.luminosityOffset, manualTuning.templateIntensityScale, manualTuning.showDeviationHighlight, manualTuning.deviationThreshold, currentSpectrum]);
+
   const resetZoom = useCallback(() => setZoom(null), []);
 
   const displaySpectra = useMemo(() => {
@@ -139,7 +168,19 @@ export default function SpectrumViewer({
       return map;
     };
 
-    const datasets = displaySpectra.map((s, idx) => {
+    const datasets: {
+      label: string;
+      data: number[];
+      borderColor: string;
+      backgroundColor: string;
+      borderWidth: number;
+      borderDash?: number[];
+      tension: number;
+      pointRadius: number;
+      pointHoverRadius: number;
+      fill: boolean;
+      spanGaps: boolean;
+    }[] = displaySpectra.map((s, idx) => {
       const map = wlToDataMap(s.points);
       const data = sortedWavelengths.map((wl) => {
         const val = map.get(wl);
@@ -199,8 +240,49 @@ export default function SpectrumViewer({
       });
     }
 
+    if (manualTuning.enabled && manualTuning.showTemplateOverlay && templateOverlayData.points.length > 0) {
+      const templateMap = wlToDataMap(templateOverlayData.points);
+      const templateData = sortedWavelengths.map((wl) => {
+        const val = templateMap.get(wl);
+        return val !== undefined ? val : null as unknown as number;
+      });
+      datasets.push({
+        label: `模板 ${templateOverlayData.template?.label || ''}`,
+        data: templateData,
+        borderColor: '#a78bfa',
+        backgroundColor: 'rgba(167, 139, 250, 0.08)',
+        borderWidth: 2,
+        borderDash: [6, 4],
+        tension: 0.15,
+        pointRadius: 0,
+        pointHoverRadius: 3,
+        fill: false,
+        spanGaps: true,
+      });
+    }
+
+    if (manualTuning.enabled && manualTuning.showDeviationHighlight && templateOverlayData.deviationRegions.length > 0) {
+      templateOverlayData.deviationRegions.forEach((region) => {
+        const regionData = sortedWavelengths.map((wl) =>
+          wl >= region.start && wl <= region.end ? 1.12 : null as unknown as number
+        );
+        datasets.push({
+          label: `模板偏差 ${region.start.toFixed(0)}–${region.end.toFixed(0)} Å (max Δ=${region.maxDiff.toFixed(3)})`,
+          data: regionData,
+          borderColor: 'transparent',
+          backgroundColor: 'rgba(167, 139, 250, 0.12)',
+          borderWidth: 0,
+          tension: 0,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          fill: true,
+          spanGaps: false,
+        });
+      });
+    }
+
     return { labels: sortedWavelengths.map((w) => w.toFixed(1)), datasets };
-  }, [displaySpectra, classificationResult, showDeviations, isComparisonActive, comparisonMode.showDifferenceRegions, residualsData.regions]);
+  }, [displaySpectra, classificationResult, showDeviations, isComparisonActive, comparisonMode.showDifferenceRegions, residualsData.regions, manualTuning.enabled, manualTuning.showTemplateOverlay, manualTuning.showDeviationHighlight, templateOverlayData]);
 
   const buildResidualChartData = useCallback(() => {
     if (residualsData.residualPairs.length === 0) {
@@ -213,7 +295,19 @@ export default function SpectrumViewer({
     );
     const sortedWavelengths = Array.from(allWavelengths).sort((a, b) => a - b);
 
-    const datasets = residualsData.residualPairs.map((pair, idx) => {
+    const datasets: {
+      label: string;
+      data: number[];
+      borderColor: string;
+      backgroundColor: string;
+      borderWidth: number;
+      borderDash?: number[];
+      tension: number;
+      pointRadius: number;
+      pointHoverRadius: number;
+      fill: boolean;
+      spanGaps: boolean;
+    }[] = residualsData.residualPairs.map((pair, idx) => {
       const resMap = new Map<number, number>();
       pair.residuals.forEach((r) => resMap.set(r.wavelength, r.diff));
       const data = sortedWavelengths.map((wl) => {
@@ -271,7 +365,7 @@ export default function SpectrumViewer({
           font: { size: 11 },
           boxWidth: 14,
           padding: 12,
-          filter: (item: any) => !item.text.includes('差异区域') && !item.text.includes('异常'),
+          filter: (item: any) => !item.text.includes('差异区域') && !item.text.includes('异常') && !item.text.includes('模板偏差'),
         },
       },
       tooltip: {
@@ -285,7 +379,7 @@ export default function SpectrumViewer({
         callbacks: {
           title: (items: any) => `λ ${items[0]?.label || ''} Å`,
           label: (ctx: any) => {
-            if (ctx.dataset && ctx.dataset.label && (ctx.dataset.label.includes('差异区域') || ctx.dataset.label.includes('异常'))) {
+            if (ctx.dataset && ctx.dataset.label && (ctx.dataset.label.includes('差异区域') || ctx.dataset.label.includes('异常') || ctx.dataset.label.includes('模板偏差'))) {
               return null;
             }
             const val = ctx.parsed?.y;
@@ -478,6 +572,18 @@ export default function SpectrumViewer({
               对比模式 · {comparisonSpectra.length} 条光谱
             </span>
           )}
+          {manualTuning.enabled && manualTuning.selectedTemplateLabel && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-900/40 text-violet-300 text-[11px] border border-violet-700/50">
+              <Sliders className="w-3 h-3" />
+              手动调优 · 模板 {manualTuning.selectedTemplateLabel}
+              {manualTuning.subtypeOffset !== 0 && (
+                <span className="text-violet-400/80 ml-1">子型 {manualTuning.subtypeOffset > 0 ? '+' : ''}{manualTuning.subtypeOffset}</span>
+              )}
+              {manualTuning.luminosityOffset !== 0 && (
+                <span className="text-violet-400/80 ml-1">光度 {manualTuning.luminosityOffset > 0 ? '+' : ''}{manualTuning.luminosityOffset}</span>
+              )}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -537,6 +643,66 @@ export default function SpectrumViewer({
           {residualsData.regions.length > 0 && (
             <span className="text-amber-400 text-[11px]">
               检测到 {residualsData.regions.length} 个差异区域
+            </span>
+          )}
+        </div>
+      )}
+
+      {manualTuning.enabled && manualTuning.selectedTemplateLabel && (
+        <div className="flex items-center gap-3 flex-wrap text-xs p-2 rounded-md bg-violet-900/20 border border-violet-800/40">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-violet-800/40 text-violet-200 text-[11px]">
+            <Sliders className="w-3 h-3" />
+            手动调优控制
+          </span>
+          <button
+            onClick={() => {
+              const { setShowTemplateOverlay } = useAppStore.getState();
+              setShowTemplateOverlay(!manualTuning.showTemplateOverlay);
+            }}
+            className={`flex items-center gap-1 px-2 py-1 rounded transition-colors ${
+              manualTuning.showTemplateOverlay
+                ? 'bg-slate-700 text-slate-200'
+                : 'bg-slate-800/50 text-slate-500 hover:text-slate-400'
+            }`}
+          >
+            <Eye className="w-3 h-3" />
+            模板叠加
+          </button>
+          <button
+            onClick={() => {
+              const { setShowDeviationHighlight } = useAppStore.getState();
+              setShowDeviationHighlight(!manualTuning.showDeviationHighlight);
+            }}
+            className={`flex items-center gap-1 px-2 py-1 rounded transition-colors ${
+              manualTuning.showDeviationHighlight
+                ? 'bg-slate-700 text-slate-200'
+                : 'bg-slate-800/50 text-slate-500 hover:text-slate-400'
+            }`}
+          >
+            <AlertTriangle className="w-3 h-3" />
+            偏差高亮
+          </button>
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-slate-500">偏差阈值</span>
+            <input
+              type="range"
+              min="0.01"
+              max="0.2"
+              step="0.005"
+              value={manualTuning.deviationThreshold}
+              onChange={(e) => {
+                const { setTuningDeviationThreshold } = useAppStore.getState();
+                setTuningDeviationThreshold(Number(e.target.value));
+              }}
+              className="w-28 accent-violet-500"
+            />
+            <span className="text-slate-400 font-mono w-12">
+              {(manualTuning.deviationThreshold * 100).toFixed(1)}%
+            </span>
+          </div>
+          {templateOverlayData.deviationRegions.length > 0 && (
+            <span className="text-violet-400 text-[11px]">
+              检测到 {templateOverlayData.deviationRegions.length} 个偏差区域
             </span>
           )}
         </div>
