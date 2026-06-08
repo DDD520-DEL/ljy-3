@@ -110,6 +110,36 @@ export interface SyncLogEntry {
   message: string;
 }
 
+export interface ResidualPoint {
+  wavelength: number;
+  diff: number;
+  absDiff: number;
+}
+
+export interface DifferenceRegion {
+  start: number;
+  end: number;
+  maxDiff: number;
+  meanDiff: number;
+  spectrumIds: [string, string];
+}
+
+export interface EWComparisonRow {
+  lineLabel: string;
+  wavelength: number;
+  values: Record<string, number>;
+  maxDiff: number;
+  meanValue: number;
+}
+
+export interface ComparisonModeState {
+  enabled: boolean;
+  selectedSpectrumIds: string[];
+  differenceThreshold: number;
+  showResiduals: boolean;
+  showDifferenceRegions: boolean;
+}
+
 export interface PendingSyncItem {
   id: string;
   entityType: 'project' | 'spectrum' | 'observation';

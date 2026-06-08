@@ -9,6 +9,7 @@ import type {
   SyncState,
   SyncDirection,
   WorkspaceState,
+  ComparisonModeState,
 } from '@/types';
 import { generateSampleSpectrum, SPECTRAL_LINES, MK_TEMPLATES } from '@/data/astronomy';
 import { syncManager } from '@/lib/syncManager';
@@ -205,6 +206,8 @@ interface AppState {
   selectedTargetName: string;
   classificationResult: ClassificationResult | null;
 
+  comparisonMode: ComparisonModeState;
+
   syncState: SyncState;
   isInitializing: boolean;
   initError: string | null;
@@ -226,6 +229,14 @@ interface AppState {
   setNormalizationRange: (range: { min: number; max: number } | null) => void;
   loadSampleData: () => void;
   clearAll: () => void;
+
+  toggleComparisonMode: () => void;
+  toggleComparisonSpectrum: (id: string) => void;
+  setComparisonSpectra: (ids: string[]) => void;
+  clearComparisonSelection: () => void;
+  setDifferenceThreshold: (threshold: number) => void;
+  toggleShowResiduals: () => void;
+  toggleShowDifferenceRegions: () => void;
 
   startSync: (direction?: SyncDirection) => Promise<void>;
   initializeData: () => Promise<void>;
@@ -275,6 +286,14 @@ export const useAppStore = create<AppState>()(
       visibleLineCategories: { hydrogen: true, helium: true, metal: false },
       normalizationRange: null,
       ...syncProjectToState(defaultProjects, initialProjectId),
+
+      comparisonMode: {
+        enabled: false,
+        selectedSpectrumIds: [],
+        differenceThreshold: 0.05,
+        showResiduals: true,
+        showDifferenceRegions: true,
+      },
 
       syncState: initialSyncState,
       isInitializing: false,
@@ -463,6 +482,76 @@ export const useAppStore = create<AppState>()(
         })),
 
       setNormalizationRange: (range) => set({ normalizationRange: range }),
+
+      toggleComparisonMode: () =>
+        set((state) => ({
+          comparisonMode: {
+            ...state.comparisonMode,
+            enabled: !state.comparisonMode.enabled,
+            selectedSpectrumIds: !state.comparisonMode.enabled
+              ? (state.currentSpectrumId ? [state.currentSpectrumId] : [])
+              : [],
+          },
+        })),
+
+      toggleComparisonSpectrum: (id) =>
+        set((state) => {
+          const current = state.comparisonMode.selectedSpectrumIds;
+          const isSelected = current.includes(id);
+          let newSelected: string[];
+          if (isSelected) {
+            newSelected = current.filter((s) => s !== id);
+          } else {
+            if (current.length >= 3) return state;
+            newSelected = [...current, id];
+          }
+          return {
+            comparisonMode: {
+              ...state.comparisonMode,
+              selectedSpectrumIds: newSelected,
+            },
+          };
+        }),
+
+      setComparisonSpectra: (ids) =>
+        set((state) => ({
+          comparisonMode: {
+            ...state.comparisonMode,
+            selectedSpectrumIds: ids.slice(0, 3),
+          },
+        })),
+
+      clearComparisonSelection: () =>
+        set((state) => ({
+          comparisonMode: {
+            ...state.comparisonMode,
+            selectedSpectrumIds: [],
+          },
+        })),
+
+      setDifferenceThreshold: (threshold) =>
+        set((state) => ({
+          comparisonMode: {
+            ...state.comparisonMode,
+            differenceThreshold: Math.max(0.001, Math.min(0.5, threshold)),
+          },
+        })),
+
+      toggleShowResiduals: () =>
+        set((state) => ({
+          comparisonMode: {
+            ...state.comparisonMode,
+            showResiduals: !state.comparisonMode.showResiduals,
+          },
+        })),
+
+      toggleShowDifferenceRegions: () =>
+        set((state) => ({
+          comparisonMode: {
+            ...state.comparisonMode,
+            showDifferenceRegions: !state.comparisonMode.showDifferenceRegions,
+          },
+        })),
 
       loadSampleData: () =>
         set((state) => {

@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -12,8 +12,9 @@ import {
 } from 'chart.js';
 import { SPECTRAL_LINES } from '@/data/astronomy';
 import { useAppStore } from '@/store/appStore';
-import type { SpectrumData, ClassificationResult } from '@/types';
-import { Crosshair, Eye, EyeOff, ZoomIn, RotateCcw } from 'lucide-react';
+import type { SpectrumData, ClassificationResult, ResidualPoint, DifferenceRegion } from '@/types';
+import { computeResidualsInterpolated, findDifferenceRegions } from '@/lib/spectralAnalysis';
+import { Crosshair, Eye, EyeOff, ZoomIn, RotateCcw, GitCompare, AlertTriangle, TrendingUp } from 'lucide-react';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip, Legend);
 
@@ -27,6 +28,9 @@ const SPECTRUM_COLORS = [
   '#f472b6',
 ];
 
+const RESIDUAL_COLOR = '#f87171';
+const DIFF_REGION_COLOR = 'rgba(248, 113, 113, 0.15)';
+
 interface SpectrumViewerProps {
   overlayIds?: string[];
   showLineLabels?: boolean;
@@ -39,11 +43,30 @@ export default function SpectrumViewer({
   showDeviations = true,
 }: SpectrumViewerProps) {
   const chartRef = useRef<ChartJS<'line'>>(null);
+  const residualChartRef = useRef<ChartJS<'line'>>(null);
   const [zoom, setZoom] = useState<{ min: number; max: number } | null>(null);
   const [hoverInfo, setHoverInfo] = useState<{ wavelength: number; intensity: number } | null>(null);
 
-  const { spectra, currentSpectrumId, visibleLineCategories, classificationResult, toggleLineCategory } =
-    useAppStore();
+  const {
+    spectra,
+    currentSpectrumId,
+    visibleLineCategories,
+    classificationResult,
+    toggleLineCategory,
+    comparisonMode,
+    toggleShowResiduals,
+    toggleShowDifferenceRegions,
+    setDifferenceThreshold,
+  } = useAppStore();
+
+  const comparisonSpectra = useMemo<SpectrumData[]>(() => {
+    if (comparisonMode.enabled && comparisonMode.selectedSpectrumIds.length >= 2) {
+      return comparisonMode.selectedSpectrumIds
+        .map((id) => spectra.find((s) => s.id === id))
+        .filter((s): s is SpectrumData => s !== undefined);
+    }
+    return [];
+  }, [comparisonMode, spectra]);
 
   const currentSpectrum = spectra.find((s) => s.id === currentSpectrumId) || null;
   const overlaySpectra = overlayIds
@@ -52,21 +75,66 @@ export default function SpectrumViewer({
 
   const visibleLines = SPECTRAL_LINES.filter((l) => visibleLineCategories[l.category]);
 
+  const isComparisonActive = comparisonSpectra.length >= 2;
+
+  const residualsData = useMemo(() => {
+    if (!isComparisonActive || comparisonSpectra.length < 2) {
+      return { residualPairs: [] as { residuals: ResidualPoint[]; label: string }[], regions: [] as DifferenceRegion[] };
+    }
+    const pairs: { residuals: ResidualPoint[]; label: string }[] = [];
+    const allRegions: DifferenceRegion[] = [];
+    for (let i = 0; i < comparisonSpectra.length; i++) {
+      for (let j = i + 1; j < comparisonSpectra.length; j++) {
+        const res = computeResidualsInterpolated(
+          comparisonSpectra[i].points,
+          comparisonSpectra[j].points
+        );
+        pairs.push({
+          residuals: res,
+          label: `${comparisonSpectra[i].name} − ${comparisonSpectra[j].name}`,
+        });
+        const regions = findDifferenceRegions(res, comparisonMode.differenceThreshold);
+        regions.forEach((r) =>
+          allRegions.push({
+            ...r,
+            spectrumIds: [comparisonSpectra[i].id, comparisonSpectra[j].id],
+          })
+        );
+      }
+    }
+    return { residualPairs: pairs, regions: allRegions };
+  }, [comparisonSpectra, isComparisonActive, comparisonMode.differenceThreshold]);
+
   const resetZoom = useCallback(() => setZoom(null), []);
 
-  const buildChartData = useCallback(() => {
-    const allSpectra: SpectrumData[] = [];
-    if (currentSpectrum) allSpectra.push(currentSpectrum);
+  const displaySpectra = useMemo(() => {
+    if (isComparisonActive) {
+      return comparisonSpectra;
+    }
+    const all: SpectrumData[] = [];
+    if (currentSpectrum) all.push(currentSpectrum);
     overlaySpectra.forEach((s) => {
-      if (!allSpectra.find((a) => a.id === s.id)) allSpectra.push(s);
+      if (!all.find((a) => a.id === s.id)) all.push(s);
     });
+    return all;
+  }, [isComparisonActive, comparisonSpectra, currentSpectrum, overlaySpectra]);
 
-    if (allSpectra.length === 0) {
+  const wlRange = useMemo(() => {
+    if (displaySpectra.length > 0) {
+      const mins = displaySpectra.map((s) => s.wavelengthMin);
+      const maxs = displaySpectra.map((s) => s.wavelengthMax);
+      return { min: Math.min(...mins), max: Math.max(...maxs) };
+    }
+    return { min: 3800, max: 7500 };
+  }, [displaySpectra]);
+
+  const buildChartData = useCallback(() => {
+    if (displaySpectra.length === 0) {
       return { labels: [] as string[], datasets: [] };
     }
 
     const allWavelengths = new Set<number>();
-    allSpectra.forEach((s) => s.points.forEach((p) => allWavelengths.add(p.wavelength)));
+    displaySpectra.forEach((s) => s.points.forEach((p) => allWavelengths.add(p.wavelength)));
     const sortedWavelengths = Array.from(allWavelengths).sort((a, b) => a - b);
 
     const wlToDataMap = (points: { wavelength: number; intensity: number }[]) => {
@@ -75,7 +143,7 @@ export default function SpectrumViewer({
       return map;
     };
 
-    const datasets = allSpectra.map((s, idx) => {
+    const datasets = displaySpectra.map((s, idx) => {
       const map = wlToDataMap(s.points);
       const data = sortedWavelengths.map((wl) => {
         const val = map.get(wl);
@@ -86,7 +154,7 @@ export default function SpectrumViewer({
         data,
         borderColor: SPECTRUM_COLORS[idx % SPECTRUM_COLORS.length],
         backgroundColor: SPECTRUM_COLORS[idx % SPECTRUM_COLORS.length] + '15',
-        borderWidth: idx === 0 ? 1.8 : 1.2,
+        borderWidth: isComparisonActive ? 1.5 : idx === 0 ? 1.8 : 1.2,
         tension: 0.15,
         pointRadius: 0,
         pointHoverRadius: 4,
@@ -115,10 +183,80 @@ export default function SpectrumViewer({
       });
     }
 
-    return { labels: sortedWavelengths.map((w) => w.toFixed(1)), datasets };
-  }, [currentSpectrum, overlaySpectra, classificationResult, showDeviations]);
+    if (isComparisonActive && comparisonMode.showDifferenceRegions && residualsData.regions.length > 0) {
+      residualsData.regions.forEach((region) => {
+        const regionData = sortedWavelengths.map((wl) =>
+          wl >= region.start && wl <= region.end ? 1.08 : null as unknown as number
+        );
+        datasets.push({
+          label: `差异区域 ${region.start.toFixed(0)}–${region.end.toFixed(0)} Å (max Δ=${region.maxDiff.toFixed(3)})`,
+          data: regionData,
+          borderColor: 'transparent',
+          backgroundColor: DIFF_REGION_COLOR,
+          borderWidth: 0,
+          tension: 0,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          fill: true,
+          spanGaps: false,
+        });
+      });
+    }
 
-  const options = {
+    return { labels: sortedWavelengths.map((w) => w.toFixed(1)), datasets };
+  }, [displaySpectra, classificationResult, showDeviations, isComparisonActive, comparisonMode.showDifferenceRegions, residualsData.regions]);
+
+  const buildResidualChartData = useCallback(() => {
+    if (residualsData.residualPairs.length === 0) {
+      return { labels: [] as string[], datasets: [] };
+    }
+
+    const allWavelengths = new Set<number>();
+    residualsData.residualPairs.forEach((pair) =>
+      pair.residuals.forEach((r) => allWavelengths.add(r.wavelength))
+    );
+    const sortedWavelengths = Array.from(allWavelengths).sort((a, b) => a - b);
+
+    const datasets = residualsData.residualPairs.map((pair, idx) => {
+      const resMap = new Map<number, number>();
+      pair.residuals.forEach((r) => resMap.set(r.wavelength, r.diff));
+      const data = sortedWavelengths.map((wl) => {
+        const val = resMap.get(wl);
+        return val !== undefined ? val : null as unknown as number;
+      });
+      return {
+        label: pair.label,
+        data,
+        borderColor: SPECTRUM_COLORS[idx % SPECTRUM_COLORS.length],
+        backgroundColor: SPECTRUM_COLORS[idx % SPECTRUM_COLORS.length] + '20',
+        borderWidth: 1.2,
+        tension: 0.1,
+        pointRadius: 0,
+        pointHoverRadius: 3,
+        fill: false,
+        spanGaps: true,
+      };
+    });
+
+    const zeroLineData = sortedWavelengths.map(() => 0);
+    datasets.push({
+      label: '零线',
+      data: zeroLineData,
+      borderColor: 'rgba(148, 163, 184, 0.4)',
+      backgroundColor: 'transparent',
+      borderWidth: 1,
+      borderDash: [4, 4],
+      tension: 0,
+      pointRadius: 0,
+      pointHoverRadius: 0,
+      fill: false,
+      spanGaps: false,
+    });
+
+    return { labels: sortedWavelengths.map((w) => w.toFixed(1)), datasets };
+  }, [residualsData.residualPairs]);
+
+  const chartOptions = {
     responsive: true,
     maintainAspectRatio: false,
     interaction: {
@@ -137,6 +275,7 @@ export default function SpectrumViewer({
           font: { size: 11 },
           boxWidth: 14,
           padding: 12,
+          filter: (item: any) => !item.text.includes('差异区域') && !item.text.includes('异常'),
         },
       },
       tooltip: {
@@ -150,7 +289,7 @@ export default function SpectrumViewer({
         callbacks: {
           title: (items: any) => `λ ${items[0]?.label || ''} Å`,
           label: (ctx: any) => {
-            if (ctx.dataset && ctx.dataset.label && ctx.dataset.label.includes('异常')) {
+            if (ctx.dataset && ctx.dataset.label && (ctx.dataset.label.includes('差异区域') || ctx.dataset.label.includes('异常'))) {
               return null;
             }
             const val = ctx.parsed?.y;
@@ -205,6 +344,85 @@ export default function SpectrumViewer({
     },
   };
 
+  const residualChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: 'nearest' as const,
+      intersect: false,
+      axis: 'x' as const,
+    },
+    animation: false,
+    plugins: {
+      legend: {
+        display: true,
+        position: 'top' as const,
+        align: 'end' as const,
+        labels: {
+          color: '#94a3b8',
+          font: { size: 10 },
+          boxWidth: 12,
+          padding: 10,
+          filter: (item: any) => item.text !== '零线',
+        },
+      },
+      tooltip: {
+        backgroundColor: 'rgba(15, 23, 42, 0.95)',
+        titleColor: '#e2e8f0',
+        bodyColor: '#cbd5e1',
+        borderColor: '#334155',
+        borderWidth: 1,
+        padding: 8,
+        callbacks: {
+          title: (items: any) => `λ ${items[0]?.label || ''} Å`,
+          label: (ctx: any) => {
+            if (ctx.dataset?.label === '零线') return null;
+            const val = ctx.parsed?.y;
+            return val !== null && val !== undefined
+              ? `${ctx.dataset.label}: Δ=${val.toFixed(4)}`
+              : null;
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        type: 'linear' as const,
+        min: zoom?.min,
+        max: zoom?.max,
+        ticks: {
+          color: '#64748b',
+          font: { size: 10 },
+          maxTicksLimit: 12,
+          callback: (value: any) => value.toFixed(0) + ' Å',
+        },
+        grid: {
+          color: 'rgba(71, 85, 105, 0.3)',
+          drawBorder: false,
+        },
+        title: {
+          display: false,
+        },
+      },
+      y: {
+        ticks: {
+          color: '#64748b',
+          font: { size: 10 },
+        },
+        grid: {
+          color: 'rgba(71, 85, 105, 0.3)',
+          drawBorder: false,
+        },
+        title: {
+          display: true,
+          text: '残差 ΔI',
+          color: '#94a3b8',
+          font: { size: 11, weight: 'bold' as const },
+        },
+      },
+    },
+  };
+
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
@@ -228,21 +446,15 @@ export default function SpectrumViewer({
     };
   }, [chartRef.current]);
 
-  const wlRange = currentSpectrum
-    ? { min: currentSpectrum.wavelengthMin, max: currentSpectrum.wavelengthMax }
-    : { min: 3800, max: 7500 };
-
   const handleZoomIn = () => {
-    if (currentSpectrum) {
-      const span = wlRange.max - wlRange.min;
-      setZoom({
-        min: wlRange.min + span * 0.2,
-        max: wlRange.max - span * 0.2,
-      });
-    }
+    const span = wlRange.max - wlRange.min;
+    setZoom({
+      min: wlRange.min + span * 0.2,
+      max: wlRange.max - span * 0.2,
+    });
   };
 
-  if (!currentSpectrum) {
+  if (displaySpectra.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-96 bg-slate-900/40 rounded-lg border border-slate-700">
         <div className="text-slate-500 text-lg">请导入或加载示例光谱数据</div>
@@ -261,6 +473,12 @@ export default function SpectrumViewer({
               ? `λ ${hoverInfo.wavelength.toFixed(1)} Å : ${hoverInfo.intensity.toFixed(3)}`
               : '鼠标悬停查看光谱数据'}
           </span>
+          {isComparisonActive && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cyan-900/40 text-cyan-300 text-[11px] border border-cyan-700/50">
+              <GitCompare className="w-3 h-3" />
+              对比模式 · {comparisonSpectra.length} 条光谱
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -278,8 +496,55 @@ export default function SpectrumViewer({
         </div>
       </div>
 
+      {isComparisonActive && (
+        <div className="flex items-center gap-3 flex-wrap text-xs p-2 rounded-md bg-slate-800/50 border border-slate-700/60">
+          <button
+            onClick={toggleShowResiduals}
+            className={`flex items-center gap-1 px-2 py-1 rounded transition-colors ${
+              comparisonMode.showResiduals
+                ? 'bg-slate-700 text-slate-200'
+                : 'bg-slate-800/50 text-slate-500 hover:text-slate-400'
+            }`}
+          >
+            <TrendingUp className="w-3 h-3" />
+            残差曲线
+          </button>
+          <button
+            onClick={toggleShowDifferenceRegions}
+            className={`flex items-center gap-1 px-2 py-1 rounded transition-colors ${
+              comparisonMode.showDifferenceRegions
+                ? 'bg-slate-700 text-slate-200'
+                : 'bg-slate-800/50 text-slate-500 hover:text-slate-400'
+            }`}
+          >
+            <AlertTriangle className="w-3 h-3" />
+            差异高亮
+          </button>
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-slate-500">差异阈值</span>
+            <input
+              type="range"
+              min="0.01"
+              max="0.2"
+              step="0.005"
+              value={comparisonMode.differenceThreshold}
+              onChange={(e) => setDifferenceThreshold(Number(e.target.value))}
+              className="w-28 accent-cyan-500"
+            />
+            <span className="text-slate-400 font-mono w-12">
+              {(comparisonMode.differenceThreshold * 100).toFixed(1)}%
+            </span>
+          </div>
+          {residualsData.regions.length > 0 && (
+            <span className="text-amber-400 text-[11px]">
+              检测到 {residualsData.regions.length} 个差异区域
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="relative h-96 bg-slate-900/40 rounded-lg border border-slate-700 p-3">
-        <Line ref={chartRef} data={buildChartData()} options={options as any} />
+        <Line ref={chartRef} data={buildChartData()} options={chartOptions as any} />
         {showLineLabels && (
           <div className="absolute left-3 right-3 top-0 h-full pointer-events-none">
             {visibleLines.map((line) => {
@@ -312,6 +577,15 @@ export default function SpectrumViewer({
           </div>
         )}
       </div>
+
+      {isComparisonActive && comparisonMode.showResiduals && residualsData.residualPairs.length > 0 && (
+        <div className="relative h-44 bg-slate-900/40 rounded-lg border border-slate-700 p-3">
+          <div className="absolute top-1 left-3 text-[10px] text-slate-500 z-10">
+            残差曲线 (Residuals)
+          </div>
+          <Line ref={residualChartRef} data={buildResidualChartData()} options={residualChartOptions as any} />
+        </div>
+      )}
 
       <div className="flex items-center gap-4 text-xs flex-wrap">
         <span className="text-slate-500">显示谱线:</span>

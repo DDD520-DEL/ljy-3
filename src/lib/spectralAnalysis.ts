@@ -1,4 +1,4 @@
-import type { SpectrumPoint, ClassificationResult, MKTemplate } from '@/types';
+import type { SpectrumPoint, ClassificationResult, MKTemplate, ResidualPoint, DifferenceRegion, EWComparisonRow, SpectrumData } from '@/types';
 import { MK_TEMPLATES, SPECTRAL_LINES } from '@/data/astronomy';
 
 const getLineWavelength = (label: string): number | undefined =>
@@ -229,6 +229,182 @@ export const classifySpectrum = (points: SpectrumPoint[]): ClassificationResult 
     deviationRegions,
   };
   return result;
+};
+
+export const computeResiduals = (
+  pointsA: SpectrumPoint[],
+  pointsB: SpectrumPoint[]
+): ResidualPoint[] => {
+  const mapB = new Map<number, number>();
+  pointsB.forEach((p) => mapB.set(p.wavelength, p.intensity));
+
+  const residuals: ResidualPoint[] = [];
+  for (const pa of pointsA) {
+    const pb = mapB.get(pa.wavelength);
+    if (pb !== undefined) {
+      const diff = pa.intensity - pb;
+      residuals.push({
+        wavelength: pa.wavelength,
+        diff,
+        absDiff: Math.abs(diff),
+      });
+    }
+  }
+  return residuals;
+};
+
+export const findDifferenceRegions = (
+  residuals: ResidualPoint[],
+  threshold: number = 0.05,
+  minGap: number = 10
+): DifferenceRegion[] => {
+  if (residuals.length === 0) return [];
+
+  const regions: DifferenceRegion[] = [];
+  let currentStart: number | null = null;
+  let currentMaxDiff = 0;
+  let currentSumDiff = 0;
+  let currentCount = 0;
+  let gapCount = 0;
+
+  const finalizeRegion = (endIdx: number) => {
+    if (currentStart !== null && currentCount > 0) {
+      regions.push({
+        start: residuals[currentStart].wavelength,
+        end: residuals[endIdx].wavelength,
+        maxDiff: currentMaxDiff,
+        meanDiff: currentSumDiff / currentCount,
+        spectrumIds: ['', ''],
+      });
+    }
+    currentStart = null;
+    currentMaxDiff = 0;
+    currentSumDiff = 0;
+    currentCount = 0;
+    gapCount = 0;
+  };
+
+  for (let i = 0; i < residuals.length; i++) {
+    const r = residuals[i];
+    if (r.absDiff >= threshold) {
+      if (currentStart === null) {
+        currentStart = i;
+      }
+      currentMaxDiff = Math.max(currentMaxDiff, r.absDiff);
+      currentSumDiff += r.diff;
+      currentCount++;
+      gapCount = 0;
+    } else if (currentStart !== null) {
+      gapCount++;
+      const gapWavelength = residuals[i].wavelength - residuals[i - 1]?.wavelength || 0;
+      if (gapCount * gapWavelength > minGap) {
+        finalizeRegion(i - gapCount);
+      }
+    }
+  }
+
+  if (currentStart !== null) {
+    finalizeRegion(residuals.length - 1);
+  }
+
+  return regions;
+};
+
+export const interpolateIntensity = (
+  points: SpectrumPoint[],
+  wavelength: number
+): number | null => {
+  if (points.length === 0) return null;
+
+  let lo = 0;
+  let hi = points.length - 1;
+
+  if (wavelength < points[lo].wavelength || wavelength > points[hi].wavelength) {
+    return null;
+  }
+
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (points[mid].wavelength === wavelength) {
+      return points[mid].intensity;
+    } else if (points[mid].wavelength < wavelength) {
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  if (hi < 0 || lo >= points.length) return null;
+
+  const p1 = points[hi];
+  const p2 = points[lo];
+  const t = (wavelength - p1.wavelength) / (p2.wavelength - p1.wavelength);
+  return p1.intensity + t * (p2.intensity - p1.intensity);
+};
+
+export const computeResidualsInterpolated = (
+  pointsA: SpectrumPoint[],
+  pointsB: SpectrumPoint[]
+): ResidualPoint[] => {
+  const residuals: ResidualPoint[] = [];
+  const allWavelengths = new Set<number>();
+  pointsA.forEach((p) => allWavelengths.add(p.wavelength));
+  pointsB.forEach((p) => allWavelengths.add(p.wavelength));
+  const sorted = Array.from(allWavelengths).sort((a, b) => a - b);
+
+  for (const wl of sorted) {
+    const intA = interpolateIntensity(pointsA, wl);
+    const intB = interpolateIntensity(pointsB, wl);
+    if (intA !== null && intB !== null) {
+      const diff = intA - intB;
+      residuals.push({
+        wavelength: wl,
+        diff,
+        absDiff: Math.abs(diff),
+      });
+    }
+  }
+  return residuals;
+};
+
+export const buildEWComparisonTable = (
+  spectra: SpectrumData[],
+  lineLabels?: string[]
+): EWComparisonRow[] => {
+  const defaultLines = [
+    'Hα', 'Hβ', 'Hγ', 'Hδ',
+    'He I 4471', 'He II 4686',
+    'Ca II K', 'Ca II H',
+    'Na I D1', 'Na I D2',
+    'Mg I b1', 'Mg I b2',
+    'Si II 6347',
+  ];
+  const lines = lineLabels || defaultLines;
+
+  return lines.map((label) => {
+    const line = SPECTRAL_LINES.find((l) => l.label === label);
+    const wavelength = line?.wavelength ?? 0;
+
+    const values: Record<string, number> = {};
+    for (const s of spectra) {
+      values[s.id] = measureEquivalentWidth(s.points, wavelength);
+    }
+
+    const ewValues = Object.values(values).filter((v) => isFinite(v));
+    const maxVal = ewValues.length > 0 ? Math.max(...ewValues) : 0;
+    const minVal = ewValues.length > 0 ? Math.min(...ewValues) : 0;
+    const meanVal = ewValues.length > 0
+      ? ewValues.reduce((s, v) => s + v, 0) / ewValues.length
+      : 0;
+
+    return {
+      lineLabel: label,
+      wavelength,
+      values,
+      maxDiff: maxVal - minVal,
+      meanValue: meanVal,
+    };
+  }).filter((row) => row.wavelength > 0);
 };
 
 export { computeLineRatios, WAVELENGTHS };

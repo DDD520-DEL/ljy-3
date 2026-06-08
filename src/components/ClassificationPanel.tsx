@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useAppStore } from '@/store/appStore';
-import { classifySpectrum, measureEquivalentWidth, computeLineRatios, WAVELENGTHS } from '@/lib/spectralAnalysis';
-import { Sparkles, AlertTriangle, CheckCircle2, Star, Thermometer, Ruler } from 'lucide-react';
+import { classifySpectrum, measureEquivalentWidth, computeLineRatios, WAVELENGTHS, buildEWComparisonTable } from '@/lib/spectralAnalysis';
+import { Sparkles, AlertTriangle, CheckCircle2, Star, Thermometer, Ruler, GitCompare, Table2 } from 'lucide-react';
 
 const SPECTRAL_TYPE_COLORS: Record<string, string> = {
   O: 'from-blue-400 to-blue-600',
@@ -33,9 +33,40 @@ const TEMPERATURE_RANGES: Record<string, string> = {
   M: '2,400 – 3,700 K',
 };
 
+const SPECTRUM_COLORS = [
+  '#00d4ff',
+  '#ff9f40',
+  '#7c5cff',
+  '#36d399',
+  '#ff6b9d',
+];
+
 export default function ClassificationPanel() {
-  const { currentSpectrumId, spectra, classificationResult, setClassificationResult } = useAppStore();
+  const {
+    currentSpectrumId,
+    spectra,
+    classificationResult,
+    setClassificationResult,
+    comparisonMode,
+  } = useAppStore();
+
   const current = spectra.find((s) => s.id === currentSpectrumId);
+
+  const comparisonSpectra = useMemo(() => {
+    if (comparisonMode.enabled && comparisonMode.selectedSpectrumIds.length >= 2) {
+      return comparisonMode.selectedSpectrumIds
+        .map((id) => spectra.find((s) => s.id === id))
+        .filter((s): s is NonNullable<typeof s> => s !== undefined);
+    }
+    return [];
+  }, [comparisonMode, spectra]);
+
+  const isComparisonActive = comparisonSpectra.length >= 2;
+
+  const ewComparisonTable = useMemo(() => {
+    if (!isComparisonActive) return null;
+    return buildEWComparisonTable(comparisonSpectra);
+  }, [comparisonSpectra, isComparisonActive]);
 
   const runClassification = () => {
     if (!current) return;
@@ -53,6 +84,12 @@ export default function ClassificationPanel() {
 
   const isBeStarCandidate = diagnostics && diagnostics.haEW < -3;
 
+  const formatEW = (val: number) => {
+    if (!isFinite(val)) return '—';
+    const sign = val < 0 ? '−' : '';
+    return `${sign}${Math.abs(val).toFixed(2)} Å`;
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -69,6 +106,101 @@ export default function ClassificationPanel() {
           运行分类
         </button>
       </div>
+
+      {isComparisonActive && ewComparisonTable && (
+        <div className="space-y-2 p-3 rounded-lg bg-slate-800/40 border border-cyan-800/40">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-cyan-300">
+            <Table2 className="w-3.5 h-3.5" />
+            等值宽度对比表
+            <span className="ml-1 text-[10px] text-slate-500">
+              ({comparisonSpectra.length} 条光谱)
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[11px] border-collapse">
+              <thead>
+                <tr className="border-b border-slate-700/60">
+                  <th className="text-left py-1.5 px-2 text-slate-400 font-medium">
+                    谱线
+                  </th>
+                  <th className="text-right py-1.5 px-2 text-slate-400 font-medium">
+                    λ (Å)
+                  </th>
+                  {comparisonSpectra.map((s, idx) => (
+                    <th
+                      key={s.id}
+                      className="text-right py-1.5 px-2 font-medium"
+                      style={{ color: SPECTRUM_COLORS[idx % SPECTRUM_COLORS.length] }}
+                    >
+                      <span className="inline-block max-w-[80px] truncate" title={s.name}>
+                        #{idx + 1} {s.name.replace(/^样本光谱 \d+ - /, '')}
+                      </span>
+                    </th>
+                  ))}
+                  <th className="text-right py-1.5 px-2 text-slate-400 font-medium">
+                    Δmax
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {ewComparisonTable.map((row) => {
+                  const significantDiff = Math.abs(row.maxDiff) > 0.5;
+                  return (
+                    <tr
+                      key={row.lineLabel}
+                      className="border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors"
+                    >
+                      <td className="py-1 px-2 text-slate-300 font-mono">
+                        {row.lineLabel}
+                      </td>
+                      <td className="py-1 px-2 text-right text-slate-500 font-mono">
+                        {row.wavelength.toFixed(1)}
+                      </td>
+                      {comparisonSpectra.map((s, idx) => {
+                        const val = row.values[s.id];
+                        const isEmission = val !== undefined && val < -3;
+                        return (
+                          <td
+                            key={s.id}
+                            className={`py-1 px-2 text-right font-mono ${
+                              isEmission ? 'text-cyan-300' : 'text-slate-300'
+                            }`}
+                            style={{
+                              borderLeft: `2px solid ${SPECTRUM_COLORS[idx % SPECTRUM_COLORS.length]}40`,
+                            }}
+                          >
+                            {formatEW(val)}
+                            {isEmission && (
+                              <span className="ml-1 text-[9px] text-cyan-400">发射</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                      <td
+                        className={`py-1 px-2 text-right font-mono ${
+                          significantDiff ? 'text-amber-400 font-semibold' : 'text-slate-500'
+                        }`}
+                      >
+                        {row.maxDiff.toFixed(2)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center gap-3 text-[10px] text-slate-500 pt-1">
+            <span className="inline-flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-cyan-500/60" />
+              发射线 (EW &lt; −3 Å)
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-amber-500/60" />
+              显著差异 (|Δ| &gt; 0.5 Å)
+            </span>
+          </div>
+        </div>
+      )}
 
       {classificationResult && current ? (
         <div className="space-y-4">
@@ -165,9 +297,11 @@ export default function ClassificationPanel() {
           )}
         </div>
       ) : (
-        <div className="p-6 text-center text-sm text-slate-500 rounded-lg bg-slate-800/30 border border-dashed border-slate-700">
-          点击"运行分类"按钮开始光谱型识别
-        </div>
+        !isComparisonActive && (
+          <div className="p-6 text-center text-sm text-slate-500 rounded-lg bg-slate-800/30 border border-dashed border-slate-700">
+            点击"运行分类"按钮开始光谱型识别
+          </div>
+        )
       )}
 
       {diagnostics && (
