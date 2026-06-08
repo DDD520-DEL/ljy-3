@@ -8,14 +8,17 @@ import {
   LineElement,
   Tooltip,
   Legend,
+  Filler,
 } from 'chart.js';
 import { useAppStore } from '@/store/appStore';
 import { measureEquivalentWidth, WAVELENGTHS } from '@/lib/spectralAnalysis';
+import { computeStatistics, getTargetsWithActiveAlerts } from '@/lib/alertEngine';
 import SpectrumViewer from './SpectrumViewer';
-import { Eye, Plus, TrendingUp, Calendar, Layers, Activity } from 'lucide-react';
+import AlertPanel from './AlertPanel';
+import { Eye, Plus, TrendingUp, Calendar, Layers, Activity, AlertTriangle } from 'lucide-react';
 import type { BeStarObservation } from '@/types';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
 
 const genId = () => Math.random().toString(36).substring(2, 9);
 
@@ -27,9 +30,36 @@ export default function BeStarMonitor() {
     setSelectedTarget,
     addBeObservation,
     currentSpectrumId,
+    alerts,
+    alertEvaluations,
+    alertConfig,
   } = useAppStore();
 
   const [overlayIds, setOverlayIds] = useState<string[]>([]);
+
+  const activeAlertTargets = useMemo(() => {
+    const active = alerts.filter((a) => !a.acknowledged);
+    return new Set(active.map((a) => a.targetName));
+  }, [alerts]);
+
+  const targetAlertMap = useMemo(() => {
+    const map = new Map<string, typeof alerts>();
+    alerts.forEach((a) => {
+      if (!map.has(a.targetName)) {
+        map.set(a.targetName, []);
+      }
+      map.get(a.targetName)!.push(a);
+    });
+    return map;
+  }, [alerts]);
+
+  const targetStatsMap = useMemo(() => {
+    const map = new Map<string, Record<string, any>>();
+    alertEvaluations.forEach((e) => {
+      map.set(e.targetName, e.perLineStats);
+    });
+    return map;
+  }, [alertEvaluations]);
 
   const uniqueTargets = useMemo(() => {
     const set = new Set<string>();
@@ -52,34 +82,95 @@ export default function BeStarMonitor() {
 
   const timeSeriesData = useMemo(() => {
     const dates = targetObservations.map((o) => o.observationDate);
+    const haValues = targetObservations.map((o) => o.haEW);
+    const hbValues = targetObservations.map((o) => o.hbEW).filter((v): v is number => v !== undefined);
+
+    const haStats = computeStatistics(haValues, alertConfig.sigmaThreshold);
+    const hbStats = computeStatistics(hbValues, alertConfig.sigmaThreshold);
+
+    const datasets: any[] = [
+      {
+        label: 'Hα EW (Å)',
+        data: targetObservations.map((o) => o.haEW),
+        borderColor: '#00d4ff',
+        backgroundColor: '#00d4ff30',
+        borderWidth: 2,
+        pointRadius: 5,
+        pointBackgroundColor: '#00d4ff',
+        tension: 0.25,
+        fill: false,
+      },
+    ];
+
+    if (haStats) {
+      datasets.push(
+        {
+          label: `Hα +${alertConfig.sigmaThreshold}σ`,
+          data: dates.map(() => haStats.upperBound),
+          borderColor: '#00d4ff60',
+          borderWidth: 1,
+          borderDash: [4, 4],
+          pointRadius: 0,
+          tension: 0,
+          fill: false,
+        },
+        {
+          label: `Hα -${alertConfig.sigmaThreshold}σ`,
+          data: dates.map(() => haStats.lowerBound),
+          borderColor: '#00d4ff60',
+          borderWidth: 1,
+          borderDash: [4, 4],
+          pointRadius: 0,
+          tension: 0,
+          fill: '+1',
+          backgroundColor: 'rgba(0, 212, 255, 0.05)',
+        }
+      );
+    }
+
+    datasets.push({
+      label: 'Hβ EW (Å)',
+      data: targetObservations.map((o) => o.hbEW ?? null),
+      borderColor: '#ff9f40',
+      backgroundColor: '#ff9f4030',
+      borderWidth: 2,
+      pointRadius: 4,
+      pointBackgroundColor: '#ff9f40',
+      tension: 0.25,
+      fill: false,
+    });
+
+    if (hbStats && hbValues.length === haValues.length) {
+      datasets.push(
+        {
+          label: `Hβ +${alertConfig.sigmaThreshold}σ`,
+          data: dates.map(() => hbStats.upperBound),
+          borderColor: '#ff9f4060',
+          borderWidth: 1,
+          borderDash: [4, 4],
+          pointRadius: 0,
+          tension: 0,
+          fill: false,
+        },
+        {
+          label: `Hβ -${alertConfig.sigmaThreshold}σ`,
+          data: dates.map(() => hbStats.lowerBound),
+          borderColor: '#ff9f4060',
+          borderWidth: 1,
+          borderDash: [4, 4],
+          pointRadius: 0,
+          tension: 0,
+          fill: '+1',
+          backgroundColor: 'rgba(255, 159, 64, 0.05)',
+        }
+      );
+    }
+
     return {
       labels: dates,
-      datasets: [
-        {
-          label: 'Hα EW (Å)',
-          data: targetObservations.map((o) => o.haEW),
-          borderColor: '#00d4ff',
-          backgroundColor: '#00d4ff30',
-          borderWidth: 2,
-          pointRadius: 5,
-          pointBackgroundColor: '#00d4ff',
-          tension: 0.25,
-          fill: false,
-        },
-        {
-          label: 'Hβ EW (Å)',
-          data: targetObservations.map((o) => o.hbEW ?? null),
-          borderColor: '#ff9f40',
-          backgroundColor: '#ff9f4030',
-          borderWidth: 2,
-          pointRadius: 4,
-          pointBackgroundColor: '#ff9f40',
-          tension: 0.25,
-          fill: false,
-        },
-      ],
+      datasets,
     };
-  }, [targetObservations]);
+  }, [targetObservations, alertConfig.sigmaThreshold]);
 
   const magSeriesData = useMemo(() => {
     const dates = targetObservations.map((o) => o.observationDate);
@@ -126,11 +217,18 @@ export default function BeStarMonitor() {
   const stats = useMemo(() => {
     if (targetObservations.length === 0) return null;
     const haEWs = targetObservations.map((o) => o.haEW);
+    const haMean = haEWs.reduce((a, b) => a + b, 0) / haEWs.length;
+    const haVariance = haEWs.reduce((s, v) => s + (v - haMean) ** 2, 0) / haEWs.length;
+    const haStd = Math.sqrt(haVariance);
+    const targetAlerts = alerts.filter(
+      (a) => a.targetName === selectedTargetName && !a.acknowledged
+    );
     return {
       count: targetObservations.length,
       haMin: Math.min(...haEWs),
       haMax: Math.max(...haEWs),
-      haMean: haEWs.reduce((a, b) => a + b, 0) / haEWs.length,
+      haMean,
+      haStd,
       dateSpan: targetObservations.length > 1
         ? Math.ceil(
             (new Date(targetObservations[targetObservations.length - 1].observationDate).getTime() -
@@ -138,8 +236,9 @@ export default function BeStarMonitor() {
               86400000
           )
         : 0,
+      activeAlertCount: targetAlerts.length,
     };
-  }, [targetObservations]);
+  }, [targetObservations, alerts, selectedTargetName]);
 
   return (
     <div className="space-y-5">
@@ -148,18 +247,28 @@ export default function BeStarMonitor() {
           <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
             <Activity className="w-4 h-4 text-cyan-400" />
             Be 星发射线监测
+            {activeAlertTargets.size > 0 && (
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-medium">
+                <AlertTriangle className="w-3 h-3" />
+                {activeAlertTargets.size} 个目标预警
+              </span>
+            )}
           </h3>
           <div className="flex items-center gap-2 flex-wrap">
             <label className="text-xs text-slate-400">目标天体:</label>
             <select
               value={selectedTargetName}
               onChange={(e) => setSelectedTarget(e.target.value)}
-              className="px-3 py-1.5 rounded-md bg-slate-800 border border-slate-600 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+              className={`px-3 py-1.5 rounded-md border text-sm focus:outline-none focus:ring-2 ${
+                activeAlertTargets.has(selectedTargetName)
+                  ? 'bg-amber-900/30 border-amber-600/60 text-amber-100 focus:ring-amber-500/50'
+                  : 'bg-slate-800 border-slate-600 text-slate-200 focus:ring-cyan-500/50'
+              }`}
             >
               <option value="">-- 选择目标 --</option>
               {uniqueTargets.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {activeAlertTargets.has(t) ? '⚠ ' : ''}{t}
                 </option>
               ))}
             </select>
@@ -174,7 +283,7 @@ export default function BeStarMonitor() {
           </div>
         </div>
         {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
             <div className="px-3 py-1.5 rounded-md bg-slate-800/60 border border-slate-700 text-center">
               <div className="text-[10px] text-slate-500">观测次数</div>
               <div className="text-sm font-mono text-slate-200">{stats.count}</div>
@@ -190,8 +299,26 @@ export default function BeStarMonitor() {
               </div>
             </div>
             <div className="px-3 py-1.5 rounded-md bg-slate-800/60 border border-slate-700 text-center">
-              <div className="text-[10px] text-slate-500">Hα EW 平均</div>
-              <div className="text-xs font-mono text-cyan-300">{stats.haMean.toFixed(2)} Å</div>
+              <div className="text-[10px] text-slate-500">Hα EW 均值 ± σ</div>
+              <div className="text-xs font-mono text-cyan-300">
+                {stats.haMean.toFixed(2)} ± {stats.haStd.toFixed(2)}
+              </div>
+            </div>
+            <div
+              className={`px-3 py-1.5 rounded-md border text-center ${
+                stats.activeAlertCount > 0
+                  ? 'bg-amber-900/30 border-amber-600/60'
+                  : 'bg-slate-800/60 border-slate-700'
+              }`}
+            >
+              <div className="text-[10px] text-slate-500">活跃预警</div>
+              <div
+                className={`text-sm font-mono ${
+                  stats.activeAlertCount > 0 ? 'text-amber-300' : 'text-slate-400'
+                }`}
+              >
+                {stats.activeAlertCount > 0 ? `⚠ ${stats.activeAlertCount}` : '0'}
+              </div>
             </div>
           </div>
         )}
@@ -341,30 +468,64 @@ export default function BeStarMonitor() {
                 </tr>
               </thead>
               <tbody>
-                {targetObservations.map((o) => (
-                  <tr key={o.id} className="border-t border-slate-700/40 hover:bg-slate-800/30">
-                    <td className="px-3 py-2 font-mono text-slate-300">{o.observationDate}</td>
-                    <td
-                      className={`px-3 py-2 text-right font-mono ${
-                        o.haEW < -5 ? 'text-cyan-300' : 'text-slate-300'
+                {targetObservations.map((o, idx) => {
+                  const isAlertRow = alerts.some(
+                    (a) => a.observationId === o.id && !a.acknowledged
+                  );
+                  const rowAlert = alerts.find((a) => a.observationId === o.id);
+                  const hasHaAlert = rowAlert?.triggers.some((t) => t.lineKey === 'haEW');
+                  const hasHbAlert = rowAlert?.triggers.some((t) => t.lineKey === 'hbEW');
+                  return (
+                    <tr
+                      key={o.id}
+                      className={`border-t hover:bg-slate-800/30 transition-colors ${
+                        isAlertRow
+                          ? 'bg-amber-900/10 border-amber-700/40'
+                          : 'border-slate-700/40'
                       }`}
                     >
-                      {o.haEW.toFixed(2)}
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono text-slate-300">
-                      {o.hbEW ? o.hbEW.toFixed(2) : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono text-slate-300">
-                      {o.vMagnitude ? o.vMagnitude.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-slate-400">{o.notes || '—'}</td>
-                  </tr>
-                ))}
+                      <td className="px-3 py-2 font-mono text-slate-300 flex items-center gap-1">
+                        {isAlertRow && (
+                          <AlertTriangle className="w-3 h-3 text-amber-400" title={rowAlert?.message} />
+                        )}
+                        {o.observationDate}
+                      </td>
+                      <td
+                        className={`px-3 py-2 text-right font-mono ${
+                          hasHaAlert
+                            ? 'text-amber-300 font-semibold'
+                            : o.haEW < -5
+                            ? 'text-cyan-300'
+                            : 'text-slate-300'
+                        }`}
+                      >
+                        {hasHaAlert && '⚠ '}
+                        {o.haEW.toFixed(2)}
+                      </td>
+                      <td
+                        className={`px-3 py-2 text-right font-mono ${
+                          hasHbAlert
+                            ? 'text-amber-300 font-semibold'
+                            : 'text-slate-300'
+                        }`}
+                      >
+                        {hasHbAlert && '⚠ '}
+                        {o.hbEW ? o.hbEW.toFixed(2) : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-slate-300">
+                        {o.vMagnitude ? o.vMagnitude.toFixed(3) : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-slate-400">{o.notes || '—'}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
       )}
+
+      <AlertPanel />
     </div>
   );
 }

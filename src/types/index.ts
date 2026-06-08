@@ -62,6 +62,8 @@ export interface ProjectData {
   currentSpectrumId: string | null;
   selectedTargetName: string;
   classificationResult: ClassificationResult | null;
+  alertConfig: AlertRuleConfig;
+  alerts: BeStarAlert[];
 }
 
 export interface Project {
@@ -148,4 +150,57 @@ export interface PendingSyncItem {
   data: unknown;
   createdAt: string;
   retryCount: number;
+}
+
+export type AlertLineKey = 'haEW' | 'hbEW';
+
+export interface AlertRuleConfig {
+  enabled: boolean;
+  sigmaThreshold: number;
+  consecutiveObservations: number;
+  monitoredLines: AlertLineKey[];
+  enableEmailNotification: boolean;
+  enableInAppNotification: boolean;
+  emailRecipients: string[];
+  customAbsoluteThreshold?: number;
+  useCustomAbsoluteThreshold: boolean;
+}
+
+export interface AlertStatistics {
+  mean: number;
+  std: number;
+  count: number;
+  upperBound: number;
+  lowerBound: number;
+}
+
+export interface AlertTriggerInfo {
+  lineKey: AlertLineKey;
+  lineLabel: string;
+  previousValue: number;
+  currentValue: number;
+  change: number;
+  changePercent: number;
+  threshold: number;
+  stats: AlertStatistics;
+  isOutlier: boolean;
+}
+
+export interface BeStarAlert {
+  id: string;
+  targetName: string;
+  observationId: string;
+  observationDate: string;
+  triggers: AlertTriggerInfo[];
+  severity: 'warning' | 'critical';
+  createdAt: string;
+  acknowledged: boolean;
+  message: string;
+}
+
+export interface AlertEvaluationResult {
+  targetName: string;
+  hasAlert: boolean;
+  alerts: BeStarAlert[];
+  perLineStats: Record<AlertLineKey, AlertStatistics | null>;
 }

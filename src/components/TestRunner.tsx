@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { runAllTests } from '@/tests/spectralAnalysis.test';
 import { runAllPersistenceTests } from '@/tests/persistence.test';
+import { runAlertTests } from '@/tests/alertEngine.test';
 import { Play, CheckCircle2, XCircle, Terminal, Loader2 } from 'lucide-react';
 
 export default function TestRunner() {
@@ -10,6 +11,11 @@ export default function TestRunner() {
   } | null>(null);
 
   const [persistenceResults, setPersistenceResults] = useState<{
+    passed: string[];
+    failed: { name: string; error: string }[];
+  } | null>(null);
+
+  const [alertResults, setAlertResults] = useState<{
     passed: string[];
     failed: { name: string; error: string }[];
   } | null>(null);
@@ -31,11 +37,18 @@ export default function TestRunner() {
     }
   };
 
+  const handleRunAlerts = () => {
+    const r = runAlertTests();
+    setAlertResults(r);
+  };
+
   const handleRunAll = async () => {
     setIsRunning(true);
     try {
       const sr = runAllTests();
       setSpectralResults(sr);
+      const ar = runAlertTests();
+      setAlertResults(ar);
       const pr = await runAllPersistenceTests();
       setPersistenceResults(pr);
     } finally {
@@ -96,7 +109,7 @@ export default function TestRunner() {
           <Terminal className="w-4 h-4 text-emerald-400" />
           单元测试面板
         </h3>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button
             onClick={handleRunSpectral}
             disabled={isRunning}
@@ -104,6 +117,14 @@ export default function TestRunner() {
           >
             <Play className="w-3.5 h-3.5" />
             光谱分析测试
+          </button>
+          <button
+            onClick={handleRunAlerts}
+            disabled={isRunning}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-amber-700/60 hover:bg-amber-600 disabled:opacity-40 text-white font-medium transition-colors"
+          >
+            <Play className="w-3.5 h-3.5" />
+            预警引擎测试
           </button>
           <button
             onClick={handleRunPersistence}
@@ -132,15 +153,18 @@ export default function TestRunner() {
         </div>
       </div>
 
-      {!spectralResults && !persistenceResults && (
+      {!spectralResults && !persistenceResults && !alertResults && (
         <div className="text-xs text-slate-500 px-2">
           光谱分析测试：归一化算法、等值宽度测量、光谱分类、谱线比值等。
+          <br />
+          预警引擎测试：3σ 统计检测、连续异常判定、自定义阈值、通知机制等。
           <br />
           持久化测试：IndexedDB 读写、localStorage 数据迁移、写入队列 latest-wins 策略等。
         </div>
       )}
 
       {renderResults(spectralResults, '光谱分析测试')}
+      {renderResults(alertResults, 'Be 星预警引擎测试')}
       {renderResults(persistenceResults, '持久化与同步测试')}
     </div>
   );

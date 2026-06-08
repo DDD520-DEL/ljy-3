@@ -10,10 +10,18 @@ import type {
   SyncDirection,
   WorkspaceState,
   ComparisonModeState,
+  AlertRuleConfig,
+  BeStarAlert,
+  AlertEvaluationResult,
 } from '@/types';
 import { generateSampleSpectrum, SPECTRAL_LINES, MK_TEMPLATES } from '@/data/astronomy';
 import { syncManager } from '@/lib/syncManager';
 import { localDB } from '@/lib/localStorage';
+import {
+  DEFAULT_ALERT_CONFIG,
+  evaluateAllTargets,
+  sendInAppNotification,
+} from '@/lib/alertEngine';
 
 const genId = () => Math.random().toString(36).substring(2, 9);
 
@@ -88,6 +96,8 @@ const createEmptyProjectData = (): ProjectData => ({
   currentSpectrumId: null,
   selectedTargetName: '',
   classificationResult: null,
+  alertConfig: { ...DEFAULT_ALERT_CONFIG },
+  alerts: [],
 });
 
 const createSampleProjectData = (): ProjectData => {
@@ -126,6 +136,8 @@ const createSampleProjectData = (): ProjectData => {
     beObservations: obsList,
     selectedTargetName: 'Gamma Cas',
     classificationResult: null,
+    alertConfig: { ...DEFAULT_ALERT_CONFIG },
+    alerts: [],
   };
 };
 
@@ -179,6 +191,8 @@ const migrateFromLocalStorage = async (): Promise<Project[] | null> => {
         currentSpectrumId: p.data?.currentSpectrumId ?? null,
         selectedTargetName: p.data?.selectedTargetName ?? '',
         classificationResult: p.data?.classificationResult ?? null,
+        alertConfig: (p.data as any)?.alertConfig ?? { ...DEFAULT_ALERT_CONFIG },
+        alerts: Array.isArray((p.data as any)?.alerts) ? (p.data as any).alerts : [],
       },
     }));
 
@@ -205,6 +219,9 @@ interface AppState {
   beObservations: BeStarObservation[];
   selectedTargetName: string;
   classificationResult: ClassificationResult | null;
+  alertConfig: AlertRuleConfig;
+  alerts: BeStarAlert[];
+  alertEvaluations: AlertEvaluationResult[];
 
   comparisonMode: ComparisonModeState;
 
@@ -238,6 +255,12 @@ interface AppState {
   toggleShowResiduals: () => void;
   toggleShowDifferenceRegions: () => void;
 
+  updateAlertConfig: (config: Partial<AlertRuleConfig>) => void;
+  runAlertEvaluation: () => void;
+  acknowledgeAlert: (alertId: string) => void;
+  acknowledgeAllAlerts: () => void;
+  clearAlerts: () => void;
+
   startSync: (direction?: SyncDirection) => Promise<void>;
   initializeData: () => Promise<void>;
   waitForPersistence: () => Promise<void>;
@@ -252,6 +275,9 @@ const syncProjectToState = (projects: Project[], projectId: string | null) => {
       beObservations: [],
       selectedTargetName: '',
       classificationResult: null as ClassificationResult | null,
+      alertConfig: { ...DEFAULT_ALERT_CONFIG },
+      alerts: [] as BeStarAlert[],
+      alertEvaluations: [] as AlertEvaluationResult[],
     };
   }
   return {
@@ -260,6 +286,9 @@ const syncProjectToState = (projects: Project[], projectId: string | null) => {
     beObservations: project.data.beObservations,
     selectedTargetName: project.data.selectedTargetName,
     classificationResult: project.data.classificationResult,
+    alertConfig: project.data.alertConfig ?? { ...DEFAULT_ALERT_CONFIG },
+    alerts: project.data.alerts ?? [],
+    alertEvaluations: [] as AlertEvaluationResult[],
   };
 };
 
@@ -422,18 +451,36 @@ export const useAppStore = create<AppState>()(
       addBeObservation: (obs) =>
         set((state) => {
           if (!state.currentProjectId) return state;
+          const newObservations = [...state.beObservations, obs];
+          const evaluations = evaluateAllTargets(newObservations, state.alertConfig, state.alerts);
+          const newAlerts = evaluations.flatMap((e) => e.alerts);
+          const dedupedAlerts = Array.from(
+            new Map([...state.alerts, ...newAlerts].map((a) => [a.id, a])).values()
+          );
+
+          if (state.alertConfig.enableInAppNotification) {
+            const brandNewAlerts = newAlerts.filter(
+              (a) => !state.alerts.some((existing) => existing.id === a.id)
+            );
+            brandNewAlerts.forEach((a) => sendInAppNotification(a));
+          }
+
           const newProjects = updateProjectData(
             state.projects,
             state.currentProjectId,
             (data) => ({
               ...data,
-              beObservations: [...data.beObservations, obs],
+              beObservations: newObservations,
+              alerts: dedupedAlerts,
             })
           );
           void persistProjects(newProjects);
+          const synced = syncProjectToState(newProjects, state.currentProjectId);
           return {
             projects: newProjects,
-            ...syncProjectToState(newProjects, state.currentProjectId),
+            ...synced,
+            alerts: dedupedAlerts,
+            alertEvaluations: evaluations,
           };
         }),
 
@@ -580,12 +627,124 @@ export const useAppStore = create<AppState>()(
               currentSpectrumId: null,
               beObservations: [],
               classificationResult: null,
+              alerts: [],
             })
           );
           void persistProjects(newProjects);
           return {
             projects: newProjects,
+            alertEvaluations: [],
             ...syncProjectToState(newProjects, state.currentProjectId),
+          };
+        }),
+
+      updateAlertConfig: (partialConfig) =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const newConfig = { ...state.alertConfig, ...partialConfig };
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              alertConfig: newConfig,
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
+            alertConfig: newConfig,
+          };
+        }),
+
+      runAlertEvaluation: () =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const evaluations = evaluateAllTargets(state.beObservations, state.alertConfig, state.alerts);
+          const allAlerts = evaluations.flatMap((e) => e.alerts);
+          const dedupedAlerts = Array.from(
+            new Map([...state.alerts, ...allAlerts].map((a) => [a.id, a])).values()
+          );
+
+          if (state.alertConfig.enableInAppNotification) {
+            const brandNewAlerts = allAlerts.filter(
+              (a) => !state.alerts.some((existing) => existing.id === a.id)
+            );
+            brandNewAlerts.forEach((a) => sendInAppNotification(a));
+          }
+
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              alerts: dedupedAlerts,
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
+            alerts: dedupedAlerts,
+            alertEvaluations: evaluations,
+          };
+        }),
+
+      acknowledgeAlert: (alertId) =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const updatedAlerts = state.alerts.map((a) =>
+            a.id === alertId ? { ...a, acknowledged: true } : a
+          );
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              alerts: updatedAlerts,
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
+            alerts: updatedAlerts,
+          };
+        }),
+
+      acknowledgeAllAlerts: () =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const updatedAlerts = state.alerts.map((a) => ({ ...a, acknowledged: true }));
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              alerts: updatedAlerts,
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
+            alerts: updatedAlerts,
+          };
+        }),
+
+      clearAlerts: () =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              alerts: [],
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
+            alerts: [],
+            alertEvaluations: [],
           };
         }),
 
@@ -680,6 +839,12 @@ export const useAppStore = create<AppState>()(
           console.error('初始化数据失败:', error);
         } finally {
           set({ isInitializing: false, syncState: syncManager.getState() });
+          setTimeout(() => {
+            const state = get();
+            if (state.alertConfig.enabled && state.beObservations.length > 0) {
+              state.runAlertEvaluation();
+            }
+          }, 100);
         }
       },
     }),
