@@ -204,3 +204,91 @@ export interface AlertEvaluationResult {
   alerts: BeStarAlert[];
   perLineStats: Record<AlertLineKey, AlertStatistics | null>;
 }
+
+export type ProcessingStepType =
+  | 'sky_subtraction'
+  | 'cosmic_ray_removal'
+  | 'wavelength_calibration'
+  | 'normalization';
+
+export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface StepConfig {
+  enabled: boolean;
+  params: Record<string, number | string | boolean>;
+}
+
+export interface StepPreview {
+  before: SpectrumPoint[];
+  after: SpectrumPoint[];
+}
+
+export interface PipelineStepState {
+  stepType: ProcessingStepType;
+  status: TaskStatus;
+  progress: number;
+  message: string;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+  preview?: StepPreview;
+}
+
+export interface PipelineConfig {
+  sky_subtraction: StepConfig & { params: { skyWindowSize: number; polynomialOrder: number } };
+  cosmic_ray_removal: StepConfig & { params: { sigmaThreshold: number; maxIterations: number; windowSize: number } };
+  wavelength_calibration: StepConfig & { params: { referenceLines: number[]; shiftTolerance: number } };
+  normalization: StepConfig & { params: { sigma: number; maxIterations: number } };
+}
+
+export interface ProcessingPipeline {
+  id: string;
+  spectrumId: string;
+  spectrumName: string;
+  config: PipelineConfig;
+  steps: PipelineStepState[];
+  overallStatus: TaskStatus;
+  overallProgress: number;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+  originalPoints: SpectrumPoint[];
+  finalPoints?: SpectrumPoint[];
+}
+
+export interface ProcessingTask {
+  id: string;
+  pipelineId: string;
+  spectrumId: string;
+  spectrumName: string;
+  status: TaskStatus;
+  progress: number;
+  currentStep: ProcessingStepType | null;
+  message: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+  result?: SpectrumData;
+}
+
+export interface TaskQueueState {
+  tasks: ProcessingTask[];
+  isPaused: boolean;
+  activeTaskId: string | null;
+}
+
+export interface PipelineStepDefinition {
+  type: ProcessingStepType;
+  name: string;
+  description: string;
+  defaultConfig: StepConfig;
+  process: (points: SpectrumPoint[], params: Record<string, number | string | boolean>, onProgress: (p: number) => void) => Promise<SpectrumPoint[]>;
+}
+
+export interface StepResult {
+  points: SpectrumPoint[];
+  previewBefore: SpectrumPoint[];
+  previewAfter: SpectrumPoint[];
+}

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { runAllTests } from '@/tests/spectralAnalysis.test';
 import { runAllPersistenceTests } from '@/tests/persistence.test';
 import { runAlertTests } from '@/tests/alertEngine.test';
+import { runAllPipelineTests } from '@/tests/pipeline.test';
 import { Play, CheckCircle2, XCircle, Terminal, Loader2 } from 'lucide-react';
 
 export default function TestRunner() {
@@ -16,6 +17,11 @@ export default function TestRunner() {
   } | null>(null);
 
   const [alertResults, setAlertResults] = useState<{
+    passed: string[];
+    failed: { name: string; error: string }[];
+  } | null>(null);
+
+  const [pipelineResults, setPipelineResults] = useState<{
     passed: string[];
     failed: { name: string; error: string }[];
   } | null>(null);
@@ -42,6 +48,16 @@ export default function TestRunner() {
     setAlertResults(r);
   };
 
+  const handleRunPipeline = async () => {
+    setIsRunning(true);
+    try {
+      const r = await runAllPipelineTests();
+      setPipelineResults(r);
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
   const handleRunAll = async () => {
     setIsRunning(true);
     try {
@@ -51,6 +67,8 @@ export default function TestRunner() {
       setAlertResults(ar);
       const pr = await runAllPersistenceTests();
       setPersistenceResults(pr);
+      const plr = await runAllPipelineTests();
+      setPipelineResults(plr);
     } finally {
       setIsRunning(false);
     }
@@ -139,6 +157,18 @@ export default function TestRunner() {
             持久化测试
           </button>
           <button
+            onClick={handleRunPipeline}
+            disabled={isRunning}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-purple-700/60 hover:bg-purple-600 disabled:opacity-40 text-white font-medium transition-colors"
+          >
+            {isRunning ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Play className="w-3.5 h-3.5" />
+            )}
+            处理流水线测试
+          </button>
+          <button
             onClick={handleRunAll}
             disabled={isRunning}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-emerald-700/60 hover:bg-emerald-600 disabled:opacity-40 text-white font-medium transition-colors"
@@ -153,19 +183,22 @@ export default function TestRunner() {
         </div>
       </div>
 
-      {!spectralResults && !persistenceResults && !alertResults && (
+      {!spectralResults && !persistenceResults && !alertResults && !pipelineResults && (
         <div className="text-xs text-slate-500 px-2">
           光谱分析测试：归一化算法、等值宽度测量、光谱分类、谱线比值等。
           <br />
           预警引擎测试：3σ 统计检测、连续异常判定、自定义阈值、通知机制等。
           <br />
           持久化测试：IndexedDB 读写、localStorage 数据迁移、写入队列 latest-wins 策略等。
+          <br />
+          处理流水线测试：天光扣除、宇宙线剔除、波长定标、归一化步骤及异步任务队列。
         </div>
       )}
 
       {renderResults(spectralResults, '光谱分析测试')}
       {renderResults(alertResults, 'Be 星预警引擎测试')}
       {renderResults(persistenceResults, '持久化与同步测试')}
+      {renderResults(pipelineResults, '光谱处理流水线测试')}
     </div>
   );
 }

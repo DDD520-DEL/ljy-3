@@ -1,17 +1,29 @@
 import { useState, useCallback } from 'react';
 import Papa from 'papaparse';
-import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
+import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Sparkles, ListTodo } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
-import { normalizeSpectrumSigmaClipping } from '@/lib/spectralAnalysis';
-import type { SpectrumData, SpectrumPoint } from '@/types';
+import { pipelineEngine } from '@/lib/pipelineEngine';
+import { DEFAULT_PIPELINE_CONFIG } from '@/lib/pipelineSteps';
+import type { SpectrumPoint } from '@/types';
 
 const genId = () => Math.random().toString(36).substring(2, 9);
 
-export default function SpectrumImporter() {
+interface SpectrumImporterProps {
+  showQueueButton?: boolean;
+  onToggleQueue?: () => void;
+  queueVisible?: boolean;
+}
+
+export default function SpectrumImporter({
+  showQueueButton = true,
+  onToggleQueue,
+  queueVisible = false,
+}: SpectrumImporterProps) {
   const { addSpectrum, loadSampleData, spectra } = useAppStore();
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [queuedCount, setQueuedCount] = useState(0);
 
   const processCSV = useCallback(
     (file: File) => {
@@ -50,21 +62,34 @@ export default function SpectrumImporter() {
             }
 
             points.sort((a, b) => a.wavelength - b.wavelength);
-            const normalizedPoints = normalizeSpectrumSigmaClipping(points);
 
-            const spectrum: SpectrumData = {
-              id: genId(),
-              name: file.name.replace(/\.[^/.]+$/, ''),
-              targetName: 'Unknown',
-              observationDate: new Date().toISOString().split('T')[0],
-              wavelengthMin: normalizedPoints[0].wavelength,
-              wavelengthMax: normalizedPoints[normalizedPoints.length - 1].wavelength,
-              points: normalizedPoints,
-              isNormalized: true,
-            };
+            const spectrumName = file.name.replace(/\.[^/.]+$/, '');
+            const spectrumId = genId();
 
-            addSpectrum(spectrum);
-            setSuccess(`成功导入光谱: ${spectrum.name} (${normalizedPoints.length} 个数据点)`);
+            const task = pipelineEngine.createTask(
+              spectrumName,
+              points,
+              DEFAULT_PIPELINE_CONFIG,
+              spectrumId
+            );
+
+            const offTasks = pipelineEngine.onTaskQueueUpdate((tasks) => {
+              const thisTask = tasks.find((t) => t.id === task.id);
+              if (thisTask && thisTask.status === 'completed' && thisTask.result) {
+                addSpectrum(thisTask.result);
+                offTasks();
+                setQueuedCount((c) => Math.max(0, c - 1));
+              } else if (thisTask && (thisTask.status === 'failed' || thisTask.status === 'cancelled')) {
+                offTasks();
+                setQueuedCount((c) => Math.max(0, c - 1));
+                if (thisTask.status === 'failed') {
+                  setError(`处理失败: ${thisTask.error || '未知错误'}`);
+                }
+              }
+            });
+
+            setQueuedCount((c) => c + 1);
+            setSuccess(`已加入处理队列: ${spectrumName} (${points.length} 个数据点)`);
             setTimeout(() => setSuccess(null), 3000);
           } catch (e) {
             setError('解析CSV文件时出错: ' + (e as Error).message);
@@ -137,6 +162,9 @@ export default function SpectrumImporter() {
           <p className="text-xs text-slate-500 mt-1">
             支持 CSV（波长,强度）或 FITS 格式
           </p>
+          <p className="text-[10px] text-cyan-400/70 mt-1.5">
+            导入后将自动进入处理流水线
+          </p>
           <input
             type="file"
             multiple
@@ -169,6 +197,24 @@ export default function SpectrumImporter() {
           <Sparkles className="w-4 h-4" />
           加载示例数据
         </button>
+        {showQueueButton && onToggleQueue && (
+          <button
+            onClick={onToggleQueue}
+            className={`relative flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+              queueVisible
+                ? 'bg-cyan-900/60 text-cyan-300 border border-cyan-700/60'
+                : 'bg-slate-800/60 text-slate-300 border border-slate-700/60 hover:bg-slate-700/60'
+            }`}
+          >
+            <ListTodo className="w-4 h-4" />
+            队列
+            {queuedCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-slate-900 text-[10px] font-bold flex items-center justify-center">
+                {queuedCount}
+              </span>
+            )}
+          </button>
+        )}
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/50 border border-slate-700 text-xs text-slate-400">
           <FileSpreadsheet className="w-4 h-4" />
           {spectra.length} 个光谱

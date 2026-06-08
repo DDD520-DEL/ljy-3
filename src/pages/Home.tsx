@@ -7,6 +7,7 @@ import {
   BookOpen,
   Info,
   Loader2,
+  ListTodo,
 } from 'lucide-react';
 import SpectrumImporter from '@/components/SpectrumImporter';
 import SpectrumList from '@/components/SpectrumList';
@@ -15,6 +16,7 @@ import ClassificationPanel from '@/components/ClassificationPanel';
 import BeStarMonitor from '@/components/BeStarMonitor';
 import ProjectSelector from '@/components/ProjectSelector';
 import SyncStatus from '@/components/SyncStatus';
+import TaskQueuePanel from '@/components/TaskQueuePanel';
 import { useAppStore } from '@/store/appStore';
 
 type TabType = 'classify' | 'monitor' | 'help';
@@ -23,6 +25,7 @@ export default function Home() {
   const { spectra, clearAll, beObservations, isInitializing, initError, initializeData } = useAppStore();
   const [activeTab, setActiveTab] = useState<TabType>('classify');
   const [showInfoOpen, setShowInfoOpen] = useState(false);
+  const [showQueue, setShowQueue] = useState(true);
 
   useEffect(() => {
     initializeData();
@@ -126,8 +129,17 @@ export default function Home() {
             <aside className="lg:col-span-3 space-y-4">
               <section className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 shadow-xl">
                 <h2 className="text-xs font-semibold text-slate-300 mb-3">数据导入</h2>
-                <SpectrumImporter />
+                <SpectrumImporter
+                  showQueueButton={true}
+                  onToggleQueue={() => setShowQueue(!showQueue)}
+                  queueVisible={showQueue}
+                />
               </section>
+              {showQueue && (
+                <section className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 shadow-xl">
+                  <TaskQueuePanel />
+                </section>
+              )}
               <section className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 shadow-xl">
                 <h2 className="text-xs font-semibold text-slate-300 mb-3 flex items-center gap-1.5">
                   <Database className="w-3.5 h-3.5" />
@@ -161,7 +173,7 @@ export default function Home() {
             <div className="space-y-5 text-sm text-slate-300">
               <h2 className="text-xl font-bold text-white mb-4">使用说明</h2>
               <div>
-                <h3 className="text-base font-semibold text-cyan-300 mb-2">1. 数据导入</h3>
+                <h3 className="text-base font-semibold text-cyan-300 mb-2">1. 数据导入与处理流水线</h3>
                 <p className="text-slate-400">支持 CSV 格式文件，应包含两列数据：</p>
                 <ul className="mt-2 space-y-1 list-disc list-inside text-slate-400">
                   <li>波长 (单位: Angstrom / Å)</li>
@@ -172,7 +184,20 @@ export default function Home() {
                   <code className="px-1.5 py-0.5 rounded bg-slate-800 text-[11px]">
                     wavelength,intensity
                   </code>
-                  。导入后会自动归一化处理。
+                  。
+                </p>
+                <p className="mt-2 text-slate-400">
+                  <strong className="text-slate-300">处理流水线</strong>
+                  ：导入后光谱自动进入异步处理队列，系统将按顺序执行以下步骤（可配置）：
+                </p>
+                <ul className="mt-1 space-y-0.5 list-disc list-inside text-slate-400 text-[13px">
+                  <li>天光扣除 - 多项式拟合去除背景天光噪声</li>
+                  <li>宇宙线剔除 - 统计检测并修复宇宙线尖峰</li>
+                  <li>波长定标 - 基于参考谱线校准波长轴</li>
+                  <li>光谱归一化 - Sigma-Clipping 连续谱归一化</li>
+                </ul>
+                <p className="mt-1 text-slate-400">
+                  每步处理均支持参数可在"流水线参数配置中调整，处理过程可在任务队列中实时查看进度和前后对比预览。
                 </p>
               </div>
               <div>
