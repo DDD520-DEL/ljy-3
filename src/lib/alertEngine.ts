@@ -174,12 +174,45 @@ export const evaluateTarget = (
     return { targetName, hasAlert: false, alerts: [], perLineStats };
   }
 
-  const alreadyAlerted = existingAlerts.some(
-    (a) => a.observationId === latestObs.id && !a.acknowledged
+  const existingUnackedAlert = existingAlerts.find(
+    (a) => a.observationId === latestObs.id && !a.acknowledged && a.targetName === targetName
   );
 
-  if (alreadyAlerted) {
-    return { targetName, hasAlert: true, alerts: existingAlerts.filter((a) => a.targetName === targetName), perLineStats };
+  const targetExistingAlerts = existingAlerts.filter((a) => a.targetName === targetName);
+
+  if (existingUnackedAlert) {
+    const existingLineKeys = new Set(existingUnackedAlert.triggers.map((t) => t.lineKey));
+    const newTriggers = triggers.filter((t) => !existingLineKeys.has(t.lineKey));
+
+    if (newTriggers.length === 0) {
+      return { targetName, hasAlert: true, alerts: targetExistingAlerts, perLineStats };
+    }
+
+    const mergedTriggers = [...existingUnackedAlert.triggers, ...newTriggers];
+    const maxChange = Math.max(...mergedTriggers.map((t) => Math.abs(t.changePercent)));
+    const severity: 'warning' | 'critical' = maxChange > 50 ? 'critical' : 'warning';
+
+    const triggerDescriptions = mergedTriggers
+      .map((t) => `${t.lineLabel} EW 变化 ${t.change >= 0 ? '+' : ''}${t.change.toFixed(2)} Å (${t.changePercent >= 0 ? '+' : ''}${t.changePercent.toFixed(1)}%)`)
+      .join('；');
+
+    const mergedAlert: BeStarAlert = {
+      ...existingUnackedAlert,
+      triggers: mergedTriggers,
+      severity,
+      message: `Be 星 ${targetName} 于 ${latestObs.observationDate} 监测到发射线异常变化：${triggerDescriptions}`,
+    };
+
+    const updatedAlerts = targetExistingAlerts.map((a) =>
+      a.id === existingUnackedAlert.id ? mergedAlert : a
+    );
+
+    return {
+      targetName,
+      hasAlert: true,
+      alerts: updatedAlerts,
+      perLineStats,
+    };
   }
 
   const maxChange = Math.max(...triggers.map((t) => Math.abs(t.changePercent)));
@@ -204,7 +237,7 @@ export const evaluateTarget = (
   return {
     targetName,
     hasAlert: true,
-    alerts: [...existingAlerts.filter((a) => a.targetName === targetName), alert],
+    alerts: [...targetExistingAlerts, alert],
     perLineStats,
   };
 };

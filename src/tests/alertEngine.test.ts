@@ -282,6 +282,154 @@ export const testEvaluateTargetAvoidsDuplicateAlerts = () => {
   assert(result2.alerts.length === alertCount1, 'second evaluation should not produce duplicate');
 };
 
+export const testEvaluateTargetMergesNewMonitoredLines = () => {
+  const observations: BeStarObservation[] = [];
+  for (let i = 0; i < 8; i++) {
+    observations.push(
+      makeObs(
+        `obs-${i}`,
+        'MergeStar',
+        `2026-01-${String(i + 1).padStart(2, '0')}`,
+        i > 5 ? -20 : -5.0,
+        i > 5 ? -5 : -1.5
+      )
+    );
+  }
+
+  const configHaOnly: AlertRuleConfig = {
+    ...DEFAULT_ALERT_CONFIG,
+    consecutiveObservations: 1,
+    monitoredLines: ['haEW'],
+  };
+  const result1 = evaluateTarget('MergeStar', observations, configHaOnly);
+  assert(result1.alerts.length === 1, 'first evaluation with only Hα produces 1 alert');
+  const firstAlert = result1.alerts[0];
+  assert(firstAlert.triggers.length === 1, 'first alert has 1 trigger');
+  assert(firstAlert.triggers[0].lineKey === 'haEW', 'first alert trigger is Hα');
+  const originalAlertId = firstAlert.id;
+  const originalAlertCreatedAt = firstAlert.createdAt;
+
+  const configBothLines: AlertRuleConfig = {
+    ...DEFAULT_ALERT_CONFIG,
+    consecutiveObservations: 1,
+    monitoredLines: ['haEW', 'hbEW'],
+  };
+  const result2 = evaluateTarget('MergeStar', observations, configBothLines, result1.alerts);
+  assert(result2.alerts.length === 1, 're-evaluation still produces 1 alert (merged)');
+  const mergedAlert = result2.alerts[0];
+  assert(mergedAlert.id === originalAlertId, 'merged alert preserves original id');
+  assert(mergedAlert.createdAt === originalAlertCreatedAt, 'merged alert preserves createdAt');
+  assert(mergedAlert.triggers.length === 2, 'merged alert has 2 triggers after adding Hβ');
+  const lineKeys = new Set(mergedAlert.triggers.map((t) => t.lineKey));
+  assert(lineKeys.has('haEW'), 'merged alert still contains Hα trigger');
+  assert(lineKeys.has('hbEW'), 'merged alert now contains Hβ trigger');
+  assert(mergedAlert.message.includes('Hα') && mergedAlert.message.includes('Hβ'), 'merged message includes both lines');
+};
+
+export const testEvaluateTargetMergesSeverityEscalation = () => {
+  const observations: BeStarObservation[] = [];
+  for (let i = 0; i < 8; i++) {
+    observations.push(
+      makeObs(
+        `obs-${i}`,
+        'SeverityStar',
+        `2026-01-${String(i + 1).padStart(2, '0')}`,
+        i > 5 ? -7 : -5.0,
+        i > 5 ? -15 : -1.5
+      )
+    );
+  }
+
+  const configHaOnly: AlertRuleConfig = {
+    ...DEFAULT_ALERT_CONFIG,
+    consecutiveObservations: 1,
+    monitoredLines: ['haEW'],
+  };
+  const result1 = evaluateTarget('SeverityStar', observations, configHaOnly);
+  assert(result1.alerts[0].severity === 'warning', 'small Hα change triggers warning');
+
+  const configBoth: AlertRuleConfig = {
+    ...DEFAULT_ALERT_CONFIG,
+    consecutiveObservations: 1,
+    monitoredLines: ['haEW', 'hbEW'],
+  };
+  const result2 = evaluateTarget('SeverityStar', observations, configBoth, result1.alerts);
+  assert(result2.alerts[0].severity === 'critical', 'large Hβ change escalates to critical');
+};
+
+export const testEvaluateTargetNoMergeWhenAllLinesAlreadyPresent = () => {
+  const observations: BeStarObservation[] = [];
+  for (let i = 0; i < 8; i++) {
+    observations.push(
+      makeObs(
+        `obs-${i}`,
+        'StableStar',
+        `2026-01-${String(i + 1).padStart(2, '0')}`,
+        i > 5 ? -20 : -5.0,
+        i > 5 ? -10 : -1.5
+      )
+    );
+  }
+
+  const config: AlertRuleConfig = {
+    ...DEFAULT_ALERT_CONFIG,
+    consecutiveObservations: 1,
+    monitoredLines: ['haEW', 'hbEW'],
+  };
+  const result1 = evaluateTarget('StableStar', observations, config);
+  const firstTriggers = [...result1.alerts[0].triggers];
+  const firstMessage = result1.alerts[0].message;
+  const firstSeverity = result1.alerts[0].severity;
+
+  const result2 = evaluateTarget('StableStar', observations, config, result1.alerts);
+  assert(result2.alerts.length === result1.alerts.length, 'alert count unchanged');
+  assert(
+    result2.alerts[0].triggers.length === firstTriggers.length,
+    'trigger count unchanged when same lines monitored'
+  );
+  assert(result2.alerts[0].message === firstMessage, 'message unchanged');
+  assert(result2.alerts[0].severity === firstSeverity, 'severity unchanged');
+};
+
+export const testEvaluateTargetAcknowledgedAlertDoesNotMerge = () => {
+  const observations: BeStarObservation[] = [];
+  for (let i = 0; i < 8; i++) {
+    observations.push(
+      makeObs(
+        `obs-${i}`,
+        'AckStar',
+        `2026-01-${String(i + 1).padStart(2, '0')}`,
+        i > 5 ? -20 : -5.0,
+        i > 5 ? -10 : -1.5
+      )
+    );
+  }
+
+  const configHaOnly: AlertRuleConfig = {
+    ...DEFAULT_ALERT_CONFIG,
+    consecutiveObservations: 1,
+    monitoredLines: ['haEW'],
+  };
+  const result1 = evaluateTarget('AckStar', observations, configHaOnly);
+  const acknowledgedAlerts = result1.alerts.map((a) => ({ ...a, acknowledged: true }));
+
+  const configBoth: AlertRuleConfig = {
+    ...DEFAULT_ALERT_CONFIG,
+    consecutiveObservations: 1,
+    monitoredLines: ['haEW', 'hbEW'],
+  };
+  const result2 = evaluateTarget('AckStar', observations, configBoth, acknowledgedAlerts);
+  assert(result2.alerts.length === 2, 'acknowledged alert stays + new unacknowledged alert created for Hβ');
+  assert(
+    result2.alerts.some((a) => a.acknowledged && a.triggers.length === 1),
+    'original acknowledged alert preserved with only Hα'
+  );
+  assert(
+    result2.alerts.some((a) => !a.acknowledged && a.triggers.length === 1),
+    'new unacknowledged alert created with Hβ trigger'
+  );
+};
+
 export const testCreateEmailLinkFormat = () => {
   const alert: BeStarAlert = {
     id: 'test',
@@ -368,6 +516,10 @@ export const runAlertTests = (): { passed: string[]; failed: { name: string; err
     { name: 'evaluateAllTargets', fn: testEvaluateAllTargets },
     { name: 'getTargetsWithActiveAlerts', fn: testGetTargetsWithActiveAlerts },
     { name: 'evaluateTargetAvoidsDuplicateAlerts', fn: testEvaluateTargetAvoidsDuplicateAlerts },
+    { name: 'evaluateTargetMergesNewMonitoredLines', fn: testEvaluateTargetMergesNewMonitoredLines },
+    { name: 'evaluateTargetMergesSeverityEscalation', fn: testEvaluateTargetMergesSeverityEscalation },
+    { name: 'evaluateTargetNoMergeWhenAllLinesAlreadyPresent', fn: testEvaluateTargetNoMergeWhenAllLinesAlreadyPresent },
+    { name: 'evaluateTargetAcknowledgedAlertDoesNotMerge', fn: testEvaluateTargetAcknowledgedAlertDoesNotMerge },
     { name: 'createEmailLinkFormat', fn: testCreateEmailLinkFormat },
     { name: 'evaluateTargetFiltersByTargetName', fn: testEvaluateTargetFiltersByTargetName },
     { name: 'evaluateSingleLineHb', fn: testEvaluateSingleLineHb },
