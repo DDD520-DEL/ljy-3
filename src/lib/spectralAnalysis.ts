@@ -1,6 +1,47 @@
 import type { SpectrumPoint, ClassificationResult, MKTemplate } from '@/types';
 import { MK_TEMPLATES, SPECTRAL_LINES } from '@/data/astronomy';
 
+export const normalizeSpectrumSigmaClipping = (
+  points: SpectrumPoint[],
+  sigma: number = 3,
+  maxIter: number = 10
+): SpectrumPoint[] => {
+  if (points.length < 5) return points;
+
+  let intensities = points.map((p) => p.intensity);
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    if (intensities.length < 5) break;
+
+    const mean = intensities.reduce((s, v) => s + v, 0) / intensities.length;
+    const variance =
+      intensities.reduce((s, v) => s + (v - mean) ** 2, 0) / intensities.length;
+    const std = Math.sqrt(variance);
+
+    if (std === 0 || !isFinite(std)) break;
+
+    const upperClip = mean + sigma * std;
+    const lowerClip = mean - sigma * std;
+
+    const prevCount = intensities.length;
+    intensities = intensities.filter((v) => v >= lowerClip && v <= upperClip);
+
+    if (intensities.length === prevCount) break;
+  }
+
+  if (intensities.length === 0) return points;
+
+  const continuumMean =
+    intensities.reduce((s, v) => s + v, 0) / intensities.length;
+
+  if (continuumMean <= 0 || !isFinite(continuumMean)) return points;
+
+  return points.map((p) => ({
+    ...p,
+    intensity: p.intensity / continuumMean,
+  }));
+};
+
 const getIntensityAtWavelength = (points: SpectrumPoint[], wavelength: number, window: number = 5): number => {
   const nearby = points.filter((p) => Math.abs(p.wavelength - wavelength) <= window);
   if (nearby.length === 0) return 1.0;
@@ -117,9 +158,10 @@ export const classifySpectrum = (points: SpectrumPoint[]): ClassificationResult 
   const bestMatch = matches[0];
   const secondBest = matches[1];
 
-  const confidence = secondBest && secondBest.score > 0
+  const rawConfidence = secondBest && secondBest.score > 0
     ? Math.max(0, Math.min(1, 1 - bestMatch.score / secondBest.score))
     : 0.5;
+  const confidence = Number((rawConfidence * 100).toFixed(1));
 
   const matchedFeatures: string[] = [];
   if (ratios['HeII4686_depth'] > 0.05) matchedFeatures.push('强 He II 吸收线');
@@ -147,13 +189,14 @@ export const classifySpectrum = (points: SpectrumPoint[]): ClassificationResult 
     deviationRegions.push({ start: 6462.8, end: 6662.8, description: haRange.label });
   }
 
-  return {
+  const result: ClassificationResult = {
     spectralType: bestMatch.template.spectralType,
     luminosityClass: bestMatch.template.luminosityClass,
-    confidence: Number((confidence * 100).toFixed(1)),
+    confidence,
     matchedFeatures,
     deviationRegions,
-  } as ClassificationResult;
+  };
+  return result;
 };
 
 export { computeLineRatios };

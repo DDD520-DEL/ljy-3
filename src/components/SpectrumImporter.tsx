@@ -2,18 +2,10 @@ import { useState, useCallback } from 'react';
 import Papa from 'papaparse';
 import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
+import { normalizeSpectrumSigmaClipping } from '@/lib/spectralAnalysis';
 import type { SpectrumData, SpectrumPoint } from '@/types';
 
 const genId = () => Math.random().toString(36).substring(2, 9);
-
-const normalizeSpectrum = (points: SpectrumPoint[]): SpectrumPoint[] => {
-  if (points.length < 2) return points;
-  const intensities = points.map((p) => p.intensity);
-  const sorted = [...intensities].sort((a, b) => a - b);
-  const p95 = sorted[Math.floor(sorted.length * 0.95)];
-  if (p95 <= 0) return points;
-  return points.map((p) => ({ ...p, intensity: p.intensity / p95 }));
-};
 
 export default function SpectrumImporter() {
   const { addSpectrum, loadSampleData, spectra } = useAppStore();
@@ -58,7 +50,7 @@ export default function SpectrumImporter() {
             }
 
             points.sort((a, b) => a.wavelength - b.wavelength);
-            const normalizedPoints = normalizeSpectrum(points);
+            const normalizedPoints = normalizeSpectrumSigmaClipping(points);
 
             const spectrum: SpectrumData = {
               id: genId(),
