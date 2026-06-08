@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useAppStore } from '@/store/appStore';
-import { classifySpectrum, measureEquivalentWidth, computeLineRatios } from '@/lib/spectralAnalysis';
+import { classifySpectrum, measureEquivalentWidth, computeLineRatios, WAVELENGTHS } from '@/lib/spectralAnalysis';
 import { Sparkles, AlertTriangle, CheckCircle2, Star, Thermometer, Ruler } from 'lucide-react';
 
 const SPECTRAL_TYPE_COLORS: Record<string, string> = {
@@ -46,8 +46,8 @@ export default function ClassificationPanel() {
   const diagnostics = useMemo(() => {
     if (!current) return null;
     const ratios = computeLineRatios(current.points);
-    const haEW = measureEquivalentWidth(current.points, 6562.8);
-    const hbEW = measureEquivalentWidth(current.points, 4861.3);
+    const haEW = measureEquivalentWidth(current.points, WAVELENGTHS.H_ALPHA);
+    const hbEW = measureEquivalentWidth(current.points, WAVELENGTHS.H_BETA);
     return { ratios, haEW, hbEW };
   }, [current]);
 

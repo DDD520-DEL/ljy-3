@@ -1,6 +1,25 @@
 import type { SpectrumPoint, ClassificationResult, MKTemplate } from '@/types';
 import { MK_TEMPLATES, SPECTRAL_LINES } from '@/data/astronomy';
 
+const getLineWavelength = (label: string): number | undefined =>
+  SPECTRAL_LINES.find((l) => l.label === label)?.wavelength;
+
+const WAVELENGTHS = {
+  H_ALPHA: getLineWavelength('Hα') ?? 6562.8,
+  H_BETA: getLineWavelength('Hβ') ?? 4861.3,
+  H_GAMMA: getLineWavelength('Hγ') ?? 4340.5,
+  H_DELTA: getLineWavelength('Hδ') ?? 4101.7,
+  HE_I_4471: getLineWavelength('He I 4471') ?? 4471.5,
+  HE_II_4686: getLineWavelength('He II 4686') ?? 4685.7,
+  CA_II_K: getLineWavelength('Ca II K') ?? 3933.7,
+  CA_II_H: getLineWavelength('Ca II H') ?? 3968.5,
+  NA_I_D1: getLineWavelength('Na I D1') ?? 5895.9,
+  NA_I_D2: getLineWavelength('Na I D2') ?? 5889.9,
+  MG_I_B1: getLineWavelength('Mg I b1') ?? 5183.6,
+  MG_I_B2: getLineWavelength('Mg I b2') ?? 5172.7,
+  SI_II_6347: getLineWavelength('Si II 6347') ?? 6347.1,
+} as const;
+
 export const normalizeSpectrumSigmaClipping = (
   points: SpectrumPoint[],
   sigma: number = 3,
@@ -99,17 +118,22 @@ export const measureEquivalentWidth = (
 };
 
 const computeLineRatios = (points: SpectrumPoint[]): Record<string, number> => {
-  const haDepth = measureLineDepth(points, 6562.8);
-  const hbDepth = measureLineDepth(points, 4861.3);
-  const hgDepth = measureLineDepth(points, 4340.5);
-  const hdDepth = measureLineDepth(points, 4101.7);
-  const heI4471 = measureLineDepth(points, 4471.5);
-  const heII4686 = measureLineDepth(points, 4685.7);
-  const caIIK = measureLineDepth(points, 3933.7);
-  const caIIH = measureLineDepth(points, 3968.5);
-  const naID = measureLineDepth(points, 5892.9);
-  const mgIb = measureLineDepth(points, 5178.2);
-  const siII6347 = measureLineDepth(points, 6347.1);
+  const haDepth = measureLineDepth(points, WAVELENGTHS.H_ALPHA);
+  const hbDepth = measureLineDepth(points, WAVELENGTHS.H_BETA);
+  const hgDepth = measureLineDepth(points, WAVELENGTHS.H_GAMMA);
+  const hdDepth = measureLineDepth(points, WAVELENGTHS.H_DELTA);
+  const heI4471 = measureLineDepth(points, WAVELENGTHS.HE_I_4471);
+  const heII4686 = measureLineDepth(points, WAVELENGTHS.HE_II_4686);
+  const caIIK = measureLineDepth(points, WAVELENGTHS.CA_II_K);
+  const caIIH = measureLineDepth(points, WAVELENGTHS.CA_II_H);
+
+  const naD1Depth = measureLineDepth(points, WAVELENGTHS.NA_I_D1);
+  const naD2Depth = measureLineDepth(points, WAVELENGTHS.NA_I_D2);
+  const naID = (naD1Depth + 2 * naD2Depth) / 3;
+
+  const mgIb = measureLineDepth(points, WAVELENGTHS.MG_I_B2);
+
+  const siII6347 = measureLineDepth(points, WAVELENGTHS.SI_II_6347);
 
   return {
     'Hα/Hβ': hbDepth > 0.01 ? haDepth / hbDepth : 0,
@@ -127,7 +151,11 @@ const computeLineRatios = (points: SpectrumPoint[]): Record<string, number> => {
     'HeII4686_depth': heII4686,
     'CaII_K_depth': caIIK,
     'NaI_D_depth': naID,
+    'NaI_D1_depth': naD1Depth,
+    'NaI_D2_depth': naD2Depth,
     'MgI_b_depth': mgIb,
+    'MgI_b1_depth': measureLineDepth(points, WAVELENGTHS.MG_I_B1),
+    'MgI_b2_depth': mgIb,
     'SiII6347_depth': siII6347,
   };
 };
@@ -186,7 +214,11 @@ export const classifySpectrum = (points: SpectrumPoint[]): ClassificationResult 
   };
   const haRange = expectedHaDepths[spType];
   if (haRange && (ratios['Hα_depth'] < haRange.low || ratios['Hα_depth'] > haRange.high)) {
-    deviationRegions.push({ start: 6462.8, end: 6662.8, description: haRange.label });
+    deviationRegions.push({
+      start: WAVELENGTHS.H_ALPHA - 100,
+      end: WAVELENGTHS.H_ALPHA + 100,
+      description: haRange.label,
+    });
   }
 
   const result: ClassificationResult = {
@@ -199,4 +231,4 @@ export const classifySpectrum = (points: SpectrumPoint[]): ClassificationResult 
   return result;
 };
 
-export { computeLineRatios };
+export { computeLineRatios, WAVELENGTHS };

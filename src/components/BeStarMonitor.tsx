@@ -10,7 +10,7 @@ import {
   Legend,
 } from 'chart.js';
 import { useAppStore } from '@/store/appStore';
-import { measureEquivalentWidth } from '@/lib/spectralAnalysis';
+import { measureEquivalentWidth, WAVELENGTHS } from '@/lib/spectralAnalysis';
 import SpectrumViewer from './SpectrumViewer';
 import { Eye, Plus, TrendingUp, Calendar, Layers, Activity } from 'lucide-react';
 import type { BeStarObservation } from '@/types';
@@ -108,8 +108,8 @@ export default function BeStarMonitor() {
   const measureCurrent = () => {
     const current = spectra.find((s) => s.id === currentSpectrumId);
     if (!current) return;
-    const haEW = measureEquivalentWidth(current.points, 6562.8);
-    const hbEW = measureEquivalentWidth(current.points, 4861.3);
+    const haEW = measureEquivalentWidth(current.points, WAVELENGTHS.H_ALPHA);
+    const hbEW = measureEquivalentWidth(current.points, WAVELENGTHS.H_BETA);
     const obs: BeStarObservation = {
       id: genId(),
       targetName: current.targetName,
