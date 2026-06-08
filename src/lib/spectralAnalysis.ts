@@ -1,0 +1,159 @@
+import type { SpectrumPoint, ClassificationResult, MKTemplate } from '@/types';
+import { MK_TEMPLATES, SPECTRAL_LINES } from '@/data/astronomy';
+
+const getIntensityAtWavelength = (points: SpectrumPoint[], wavelength: number, window: number = 5): number => {
+  const nearby = points.filter((p) => Math.abs(p.wavelength - wavelength) <= window);
+  if (nearby.length === 0) return 1.0;
+  return Math.min(...nearby.map((p) => p.intensity));
+};
+
+const measureLineDepth = (
+  points: SpectrumPoint[],
+  wavelength: number,
+  continuumWindow: number = 50,
+  lineWindow: number = 8
+): number => {
+  const continuumLeft = points.filter(
+    (p) => p.wavelength >= wavelength - continuumWindow - 20 && p.wavelength <= wavelength - continuumWindow
+  );
+  const continuumRight = points.filter(
+    (p) => p.wavelength >= wavelength + continuumWindow && p.wavelength <= wavelength + continuumWindow + 20
+  );
+  const continuumPoints = [...continuumLeft, ...continuumRight];
+  const continuum =
+    continuumPoints.length > 0
+      ? continuumPoints.reduce((sum, p) => sum + p.intensity, 0) / continuumPoints.length
+      : 1.0;
+  const lineMin = getIntensityAtWavelength(points, wavelength, lineWindow);
+  return Math.max(0, 1 - lineMin / continuum);
+};
+
+export const measureEquivalentWidth = (
+  points: SpectrumPoint[],
+  centerWavelength: number,
+  lineWidth: number = 40,
+  continuumWidth: number = 100
+): number => {
+  const linePoints = points.filter(
+    (p) => p.wavelength >= centerWavelength - continuumWidth && p.wavelength <= centerWavelength + continuumWidth
+  );
+  if (linePoints.length < 10) return 0;
+
+  const leftCont = linePoints.filter((p) => p.wavelength < centerWavelength - lineWidth);
+  const rightCont = linePoints.filter((p) => p.wavelength > centerWavelength + lineWidth);
+  const allCont = [...leftCont, ...rightCont];
+  const continuumLevel = allCont.length > 0
+    ? allCont.reduce((s, p) => s + p.intensity, 0) / allCont.length
+    : 1.0;
+
+  let ew = 0;
+  for (let i = 1; i < linePoints.length; i++) {
+    const dl = linePoints[i - 1];
+    const dr = linePoints[i];
+    const dwl = dr.wavelength - dl.wavelength;
+    const avgInt = (dr.intensity + dl.intensity) / 2;
+    ew += (1 - avgInt / continuumLevel) * dwl;
+  }
+  return ew;
+};
+
+const computeLineRatios = (points: SpectrumPoint[]): Record<string, number> => {
+  const haDepth = measureLineDepth(points, 6562.8);
+  const hbDepth = measureLineDepth(points, 4861.3);
+  const hgDepth = measureLineDepth(points, 4340.5);
+  const hdDepth = measureLineDepth(points, 4101.7);
+  const heI4471 = measureLineDepth(points, 4471.5);
+  const heII4686 = measureLineDepth(points, 4685.7);
+  const caIIK = measureLineDepth(points, 3933.7);
+  const caIIH = measureLineDepth(points, 3968.5);
+  const naID = measureLineDepth(points, 5892.9);
+  const mgIb = measureLineDepth(points, 5178.2);
+  const siII6347 = measureLineDepth(points, 6347.1);
+
+  return {
+    'Hα/Hβ': hbDepth > 0.01 ? haDepth / hbDepth : 0,
+    'HeII4686/HeI4471': heI4471 > 0.01 ? heII4686 / heI4471 : 0,
+    'HeI4471/Hβ': hbDepth > 0.01 ? heI4471 / hbDepth : 0,
+    'CaII_K/Hγ': hgDepth > 0.01 ? caIIK / hgDepth : 0,
+    'CaII_H/Hδ': hdDepth > 0.01 ? caIIH / hdDepth : 0,
+    'NaI_D/Hβ': hbDepth > 0.01 ? naID / hbDepth : 0,
+    'MgI_b/Hβ': hbDepth > 0.01 ? mgIb / hbDepth : 0,
+    'SiII6347/Hβ': hbDepth > 0.01 ? siII6347 / hbDepth : 0,
+    'Hα_depth': haDepth,
+    'Hβ_depth': hbDepth,
+    'Hγ_depth': hgDepth,
+    'HeI4471_depth': heI4471,
+    'HeII4686_depth': heII4686,
+    'CaII_K_depth': caIIK,
+    'NaI_D_depth': naID,
+    'MgI_b_depth': mgIb,
+    'SiII6347_depth': siII6347,
+  };
+};
+
+const calculateTemplateMatch = (measured: Record<string, number>, template: MKTemplate): number => {
+  let totalDiff = 0;
+  let count = 0;
+  for (const [key, value] of Object.entries(template.lineRatios)) {
+    if (measured[key] !== undefined && !isNaN(measured[key])) {
+      const diff = Math.abs(measured[key] - value);
+      const norm = Math.max(value, 0.1);
+      totalDiff += diff / norm;
+      count++;
+    }
+  }
+  return count > 0 ? totalDiff / count : Infinity;
+};
+
+export const classifySpectrum = (points: SpectrumPoint[]): ClassificationResult => {
+  const ratios = computeLineRatios(points);
+  const matches = MK_TEMPLATES.map((template) => ({
+    template,
+    score: calculateTemplateMatch(ratios, template),
+  }));
+
+  matches.sort((a, b) => a.score - b.score);
+
+  const bestMatch = matches[0];
+  const secondBest = matches[1];
+
+  const confidence = secondBest && secondBest.score > 0
+    ? Math.max(0, Math.min(1, 1 - bestMatch.score / secondBest.score))
+    : 0.5;
+
+  const matchedFeatures: string[] = [];
+  if (ratios['HeII4686_depth'] > 0.05) matchedFeatures.push('强 He II 吸收线');
+  if (ratios['HeI4471_depth'] > 0.1) matchedFeatures.push('显著 He I 线');
+  if (ratios['Hα_depth'] > 0.2) matchedFeatures.push('强巴尔末线系');
+  if (ratios['CaII_K_depth'] > 0.1) matchedFeatures.push('Ca II H&K 线');
+  if (ratios['NaI_D_depth'] > 0.05) matchedFeatures.push('Na I D 线');
+  if (ratios['MgI_b_depth'] > 0.1) matchedFeatures.push('Mg I b 线');
+  if (ratios['SiII6347_depth'] > 0.05) matchedFeatures.push('Si II 线');
+
+  const deviationRegions: { start: number; end: number; description: string }[] = [];
+
+  const spType = bestMatch.template.spectralType;
+  const expectedHaDepths: Record<string, { low: number; high: number; label: string }> = {
+    O: { low: 0.02, high: 0.1, label: 'O型星巴尔末线深度异常' },
+    B: { low: 0.05, high: 0.3, label: 'B型星巴尔末线深度异常' },
+    A: { low: 0.2, high: 0.5, label: 'A型星巴尔末线深度异常' },
+    F: { low: 0.1, high: 0.35, label: 'F型星巴尔末线深度异常' },
+    G: { low: 0.08, high: 0.2, label: 'G型星巴尔末线深度异常' },
+    K: { low: 0.02, high: 0.15, label: 'K型星巴尔末线深度异常' },
+    M: { low: 0.01, high: 0.08, label: 'M型星巴尔末线深度异常' },
+  };
+  const haRange = expectedHaDepths[spType];
+  if (haRange && (ratios['Hα_depth'] < haRange.low || ratios['Hα_depth'] > haRange.high)) {
+    deviationRegions.push({ start: 6462.8, end: 6662.8, description: haRange.label });
+  }
+
+  return {
+    spectralType: bestMatch.template.spectralType,
+    luminosityClass: bestMatch.template.luminosityClass,
+    confidence: Number((confidence * 100).toFixed(1)),
+    matchedFeatures,
+    deviationRegions,
+  } as ClassificationResult;
+};
+
+export { computeLineRatios };
