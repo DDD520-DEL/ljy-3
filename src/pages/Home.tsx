@@ -11,6 +11,7 @@ import {
   Users,
   Sparkles,
   Rainbow,
+  BarChart3,
 } from 'lucide-react';
 import SpectrumImporter from '@/components/SpectrumImporter';
 import SpectrumList from '@/components/SpectrumList';
@@ -24,11 +25,12 @@ import TeamPanel from '@/components/TeamPanel';
 import EphemerisCalculator from '@/components/EphemerisCalculator';
 import SpectralLineReference from '@/components/SpectralLineReference';
 import FilterSimulator from '@/components/FilterSimulator';
+import StatsDashboard from '@/components/StatsDashboard';
 import { useAppStore } from '@/store/appStore';
 import { useTeamStore } from '@/store/teamStore';
 import { useMemo } from 'react';
 
-type TabType = 'classify' | 'monitor' | 'ephemeris' | 'filters' | 'team' | 'help';
+type TabType = 'classify' | 'monitor' | 'ephemeris' | 'filters' | 'team' | 'dashboard' | 'help';
 
 export default function Home() {
   const { spectra, clearAll, beObservations, isInitializing, initError, initializeData } = useAppStore();
@@ -152,6 +154,17 @@ export default function Home() {
             >
               <Users className="w-4 h-4" />
               团队协作
+            </button>
+            <button
+              onClick={() => setActiveTab('dashboard')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-sm font-medium transition-all ${
+                activeTab === 'dashboard'
+                  ? 'bg-cyan-900/40 text-cyan-300 border border-cyan-700/50'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4" />
+              统计概览
             </button>
             <button
               onClick={() => setActiveTab('help')}
@@ -332,6 +345,10 @@ export default function Home() {
               </section>
             </div>
           </div>
+        )}
+
+        {activeTab === 'dashboard' && (
+          <StatsDashboard />
         )}
 
         {activeTab === 'help' && (
