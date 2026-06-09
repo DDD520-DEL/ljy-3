@@ -581,3 +581,21 @@ export interface TimelineEvent {
   type: 'sunrise' | 'sunset' | 'twilight' | 'rise' | 'transit' | 'set' | 'observation_start' | 'observation_end';
   description?: string;
 }
+
+export interface FilterResponsePoint {
+  wavelength: number;
+  transmission: number;
+}
+
+export interface FilterData {
+  id: string;
+  name: string;
+  system: string;
+  description: string;
+  color: string;
+  points: FilterResponsePoint[];
+  centralWavelength: number;
+  fwhm: number;
+}
+
+export type FilterSystem = 'johnson_ubvri' | 'sdss_ugriz';

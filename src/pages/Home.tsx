@@ -10,6 +10,7 @@ import {
   ListTodo,
   Users,
   Sparkles,
+  Rainbow,
 } from 'lucide-react';
 import SpectrumImporter from '@/components/SpectrumImporter';
 import SpectrumList from '@/components/SpectrumList';
@@ -22,11 +23,12 @@ import TaskQueuePanel from '@/components/TaskQueuePanel';
 import TeamPanel from '@/components/TeamPanel';
 import EphemerisCalculator from '@/components/EphemerisCalculator';
 import SpectralLineReference from '@/components/SpectralLineReference';
+import FilterSimulator from '@/components/FilterSimulator';
 import { useAppStore } from '@/store/appStore';
 import { useTeamStore } from '@/store/teamStore';
 import { useMemo } from 'react';
 
-type TabType = 'classify' | 'monitor' | 'ephemeris' | 'team' | 'help';
+type TabType = 'classify' | 'monitor' | 'ephemeris' | 'filters' | 'team' | 'help';
 
 export default function Home() {
   const { spectra, clearAll, beObservations, isInitializing, initError, initializeData } = useAppStore();
@@ -130,6 +132,17 @@ export default function Home() {
               星历计算
             </button>
             <button
+              onClick={() => setActiveTab('filters')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-sm font-medium transition-all ${
+                activeTab === 'filters'
+                  ? 'bg-cyan-900/40 text-cyan-300 border border-cyan-700/50'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+              }`}
+            >
+              <Rainbow className="w-4 h-4" />
+              滤光片模拟
+            </button>
+            <button
               onClick={() => setActiveTab('team')}
               className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-sm font-medium transition-all ${
                 activeTab === 'team'
@@ -221,6 +234,10 @@ export default function Home() {
           <section className="p-5 rounded-xl bg-slate-900/60 border border-slate-800/80 shadow-xl">
             <EphemerisCalculator />
           </section>
+        )}
+
+        {activeTab === 'filters' && (
+          <FilterSimulator />
         )}
 
         {activeTab === 'team' && (
