@@ -19,7 +19,7 @@ import {
   getRankedCandidateTemplates,
   createManualClassification,
 } from '@/lib/spectralAnalysis';
-import { initializeSpectrumWithVersion } from '@/lib/versionManager';
+import { initializeSpectrumWithVersion, createInitialVersion, rollbackToVersion, switchToVersion, getCurrentVersion, applyProcessingWithVersion, getVersionChain } from '@/lib/versionManager';
 
 const makePoint = (wl: number, int: number): SpectrumPoint => ({ wavelength: wl, intensity: int });
 
@@ -724,6 +724,139 @@ export const testCreateManualClassificationOffsetApplied = () => {
   }
 };
 
+// ── versionManager: createInitialVersion ────────────────────────────────────
+
+export const testCreateInitialVersionEmptyPoints = () => {
+  const version = createInitialVersion([], 'test-user');
+  assert(version.version === 1, 'version number is 1');
+  assert(version.operation === 'import', 'operation is import');
+  assert(isFinite(version.wavelengthMin) && version.wavelengthMin === 0, 'wavelengthMin is 0 not Infinity');
+  assert(isFinite(version.wavelengthMax) && version.wavelengthMax === 0, 'wavelengthMax is 0 not -Infinity');
+  assert(Array.isArray(version.points), 'points is array');
+  assert(version.points.length === 0, 'points array is empty');
+};
+
+export const testCreateInitialVersionNullPoints = () => {
+  const version = createInitialVersion(null as unknown as [], 'test-user');
+  assert(isFinite(version.wavelengthMin) && version.wavelengthMin === 0, 'handles null points gracefully');
+  assert(isFinite(version.wavelengthMax) && version.wavelengthMax === 0, 'handles null points gracefully');
+  assert(Array.isArray(version.points), 'points is array');
+  assert(version.points.length === 0, 'points array is empty');
+};
+
+export const testCreateInitialVersionWithData = () => {
+  const points: SpectrumPoint[] = [
+    makePoint(4000, 0.9),
+    makePoint(5000, 1.0),
+    makePoint(6000, 0.8),
+  ];
+  const version = createInitialVersion(points, 'test-user', true);
+  assert(version.version === 1, 'version number is 1');
+  assert(version.wavelengthMin === 4000, 'wavelengthMin correct');
+  assert(version.wavelengthMax === 6000, 'wavelengthMax correct');
+  assert(version.isNormalized === true, 'isNormalized preserved');
+  assert(version.points.length === 3, 'points count correct');
+  assert(version.points[0].wavelength === 4000, 'first point correct');
+};
+
+// ── versionManager: rollbackToVersion ───────────────────────────────────────
+
+export const testRollbackVersionStoresReadableVersionNumber = () => {
+  const spectrum = makeFakeSpectrum('sp-rollback', 'Test', 1);
+  const v1 = spectrum.versions.find((v) => v.version === 1);
+  assert(v1 !== undefined, 'v1 exists');
+
+  const processed: SpectrumData = applyProcessingWithVersion(
+    spectrum,
+    spectrum.points.map((p) => makePoint(p.wavelength, p.intensity * 0.9)),
+    'normalization',
+    'test-user',
+    { factor: 0.9 },
+    '调整归一化参数'
+  );
+  const v2 = processed.versions.find((v) => v.version === 2);
+  assert(v2 !== undefined, 'v2 exists after processing');
+  assert(processed.versions.length === 2, 'has 2 versions');
+
+  const rolledBack = rollbackToVersion(processed, v1!.id, 'test-user');
+  assert(rolledBack !== null, 'rollback succeeds');
+  const v3 = rolledBack!.versions.find((v) => v.version === 3);
+  assert(v3 !== undefined, 'v3 (rollback) exists');
+  assert(v3!.operation === 'manual_edit', 'rollback operation is manual_edit');
+  assert('rolledBackFromVersion' in v3!.params, 'params contains rolledBackFromVersion');
+  const rolledBackVer = v3!.params.rolledBackFromVersion;
+  assert(typeof rolledBackVer === 'number', 'rolledBackFromVersion is number (readable version)');
+  assert(rolledBackVer === 1, `rolledBackFromVersion should be 1, got ${rolledBackVer}`);
+  assert(!(typeof rolledBackVer === 'string' && rolledBackVer.length > 5), 'not storing internal versionId');
+  assert(rolledBack!.versions.length === 3, 'now has 3 versions');
+  assert(getCurrentVersion(rolledBack!)!.version === 3, 'current version is v3');
+};
+
+export const testRollbackToInvalidVersionReturnsNull = () => {
+  const spectrum = makeFakeSpectrum('sp-invalid', 'Test', 1);
+  const result = rollbackToVersion(spectrum, 'non-existent-id', 'test-user');
+  assert(result === null, 'rollback to invalid version id returns null');
+};
+
+// ── versionManager: switchToVersion & version chain ─────────────────────
+
+export const testSwitchVersionUpdatesCurrentPointer = () => {
+  const spectrum = makeFakeSpectrum('sp-switch', 'Test', 1);
+  const v1 = spectrum.versions[0];
+  const processed = applyProcessingWithVersion(
+    spectrum,
+    spectrum.points.map((p) => makePoint(p.wavelength, p.intensity * 0.5)),
+    'manual_edit',
+    'test-user'
+  );
+  const v2 = processed.versions.find((v) => v.version === 2);
+  assert(processed.currentVersionId === v2!.id, 'current is v2');
+
+  const switched = switchToVersion(processed, v1.id);
+  assert(switched !== null, 'switch succeeds');
+  assert(switched!.currentVersionId === v1.id, 'current switched to v1');
+  assert(switched!.versions.length === 2, 'still has 2 versions (switch does not create new)');
+  assert(switched!.wavelengthMin === v1.wavelengthMin, 'data from v1 applied');
+};
+
+export const testGetVersionChainFromCurrent = () => {
+  const spectrum = makeFakeSpectrum('sp-chain', 'Test', 1);
+  const s2 = applyProcessingWithVersion(spectrum, spectrum.points, 'manual_edit', 'test-user');
+  const s3 = applyProcessingWithVersion(s2, s2.points, 'normalization', 'test-user');
+  const chain = getVersionChain(s3);
+  assert(chain.length === 3, 'chain has 3 versions');
+  assert(chain[0].version === 1, 'first in chain is v1');
+  assert(chain[2].version === 3, 'last in chain is v3');
+  assert(chain[0].operation === 'import', 'v1 is import');
+  assert(chain[2].operation === 'normalization', 'v3 is normalization');
+};
+
+// ── versionManager: initializeSpectrumWithVersion ─────────────────────────────
+
+export const testInitializeSpectrumWithVersionEmptyPoints = () => {
+  const base = {
+    id: 'sp-empty-init',
+    name: 'Empty Spectrum',
+    targetName: 'Test',
+    observationDate: '2026-01-01',
+    wavelengthMin: 0,
+    wavelengthMax: 0,
+    points: [],
+    isNormalized: false,
+    visibility: 'private' as const,
+    ownerId: 'test-user',
+    ownerName: 'Test User',
+    sharedClassifications: [],
+  };
+  const spectrum = initializeSpectrumWithVersion(base, 'test-user');
+  assert(spectrum.currentVersionId !== undefined && spectrum.currentVersionId !== null, 'currentVersionId set');
+  assert(Array.isArray(spectrum.versions), 'versions is array');
+  assert(spectrum.versions.length === 1, 'one initial version');
+  const v = spectrum.versions[0];
+  assert(isFinite(v.wavelengthMin) && v.wavelengthMin === 0, 'wavelengthMin 0 for empty points');
+  assert(isFinite(v.wavelengthMax) && v.wavelengthMax === 0, 'wavelengthMax 0 for empty points');
+};
+
 export const runAllTests = (): { passed: string[]; failed: { name: string; error: string }[] } => {
   const tests = [
     { name: 'wavelengthConstantsMatchSpectralLines', fn: testWavelengthConstantsMatchSpectralLines },
@@ -789,6 +922,18 @@ export const runAllTests = (): { passed: string[]; failed: { name: string; error
     { name: 'createManualClassificationStructure', fn: testCreateManualClassificationStructure },
     { name: 'createManualClassificationNoNotes', fn: testCreateManualClassificationNoNotes },
     { name: 'createManualClassificationOffsetApplied', fn: testCreateManualClassificationOffsetApplied },
+    // createInitialVersion
+    { name: 'createInitialVersionEmptyPoints', fn: testCreateInitialVersionEmptyPoints },
+    { name: 'createInitialVersionNullPoints', fn: testCreateInitialVersionNullPoints },
+    { name: 'createInitialVersionWithData', fn: testCreateInitialVersionWithData },
+    // rollbackToVersion
+    { name: 'rollbackVersionStoresReadableVersionNumber', fn: testRollbackVersionStoresReadableVersionNumber },
+    { name: 'rollbackToInvalidVersionReturnsNull', fn: testRollbackToInvalidVersionReturnsNull },
+    // switchToVersion & version chain
+    { name: 'switchVersionUpdatesCurrentPointer', fn: testSwitchVersionUpdatesCurrentPointer },
+    { name: 'getVersionChainFromCurrent', fn: testGetVersionChainFromCurrent },
+    // initializeSpectrumWithVersion
+    { name: 'initializeSpectrumWithVersionEmptyPoints', fn: testInitializeSpectrumWithVersionEmptyPoints },
   ];
 
   const passed: string[] = [];

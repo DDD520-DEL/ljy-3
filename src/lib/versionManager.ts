@@ -26,8 +26,14 @@ export const createInitialVersion = (
   createdBy: string,
   isNormalized: boolean = false
 ): SpectrumVersion => {
-  const wavelengthMin = Math.min(...points.map((p) => p.wavelength));
-  const wavelengthMax = Math.max(...points.map((p) => p.wavelength));
+  const safePoints = points || [];
+  const hasPoints = safePoints.length > 0;
+  const wavelengthMin = hasPoints
+    ? Math.min(...safePoints.map((p) => p.wavelength))
+    : 0;
+  const wavelengthMax = hasPoints
+    ? Math.max(...safePoints.map((p) => p.wavelength))
+    : 0;
   return {
     id: genId(),
     version: 1,
@@ -37,7 +43,7 @@ export const createInitialVersion = (
     description: '初始数据导入',
     params: {},
     parentVersionId: null,
-    points: points.map((p) => ({ ...p })),
+    points: safePoints.map((p) => ({ ...p })),
     wavelengthMin,
     wavelengthMax,
     isNormalized,
@@ -56,8 +62,14 @@ export const createNewVersion = (
     (v) => v.id === spectrum.currentVersionId
   );
   const nextVersionNumber = currentVersion ? currentVersion.version + 1 : 1;
-  const wavelengthMin = Math.min(...newPoints.map((p) => p.wavelength));
-  const wavelengthMax = Math.max(...newPoints.map((p) => p.wavelength));
+  const safePoints = newPoints || [];
+  const hasPoints = safePoints.length > 0;
+  const wavelengthMin = hasPoints
+    ? Math.min(...safePoints.map((p) => p.wavelength))
+    : 0;
+  const wavelengthMax = hasPoints
+    ? Math.max(...safePoints.map((p) => p.wavelength))
+    : 0;
 
   let isNormalized = currentVersion?.isNormalized ?? false;
   if (operation === 'normalization') {
@@ -73,7 +85,7 @@ export const createNewVersion = (
     description: description || getOperationLabel(operation),
     params,
     parentVersionId: spectrum.currentVersionId,
-    points: newPoints.map((p) => ({ ...p })),
+    points: safePoints.map((p) => ({ ...p })),
     wavelengthMin,
     wavelengthMax,
     isNormalized,
@@ -197,7 +209,7 @@ export const rollbackToVersion = (
     createdBy,
     operation: 'manual_edit',
     description: `回退到版本 v${targetVersion.version}`,
-    params: { rolledBackFromVersion: targetVersionId },
+    params: { rolledBackFromVersion: targetVersion.version },
     parentVersionId: spectrum.currentVersionId,
     points: targetVersion.points.map((p) => ({ ...p })),
     wavelengthMin: targetVersion.wavelengthMin,
