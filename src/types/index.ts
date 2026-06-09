@@ -370,7 +370,34 @@ export interface SharedClassificationResult extends ManualClassificationResult {
   spectrumId: string;
 }
 
-export interface SpectrumData {
+export interface SpectrumObservationMeta {
+  observationTime?: string;
+  exposureTime?: number;
+  telescope?: string;
+  instrument?: string;
+  observatory?: string;
+  observer?: string;
+  grating?: string;
+  dispersion?: number;
+  wavelengthPixelSize?: number;
+  centralWavelength?: number;
+  binning?: string;
+  filter?: string;
+  gain?: number;
+  temperature?: number;
+  airmass?: number;
+  ra?: string;
+  dec?: string;
+  jd?: number;
+  mjd?: number;
+  equinox?: number;
+  radialVelocity?: number;
+  resolution?: number;
+  notes?: string;
+  rawHeaders?: Record<string, string | number | boolean | null>;
+}
+
+export interface SpectrumData extends SpectrumObservationMeta {
   id: string;
   name: string;
   targetName: string;

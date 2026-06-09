@@ -7,37 +7,14 @@ import type {
   PipelineConfig,
   TaskStatus,
   ProcessingStepType,
+  SpectrumObservationMeta,
 } from '@/types';
 import type { FitsObservationMetadata } from './fits/types';
 import { processStep, STEP_ORDER, STEP_NAMES, DEFAULT_PIPELINE_CONFIG } from './pipelineSteps';
 
-export interface SpectrumMetadata {
+export interface SpectrumMetadata extends SpectrumObservationMeta {
   targetName?: string;
   observationDate?: string;
-  observationTime?: string;
-  exposureTime?: number;
-  telescope?: string;
-  instrument?: string;
-  observatory?: string;
-  observer?: string;
-  grating?: string;
-  dispersion?: number;
-  wavelengthPixelSize?: number;
-  centralWavelength?: number;
-  binning?: string;
-  filter?: string;
-  gain?: number;
-  temperature?: number;
-  airmass?: number;
-  ra?: string;
-  dec?: string;
-  jd?: number;
-  mjd?: number;
-  equinox?: number;
-  radialVelocity?: number;
-  resolution?: number;
-  notes?: string;
-  rawHeaders?: Record<string, string | number | boolean | null>;
 }
 
 export function fitsMetadataToSpectrumMeta(fitsMeta: FitsObservationMetadata): SpectrumMetadata {
@@ -329,6 +306,30 @@ class PipelineEngine {
         wavelengthMax: sorted[sorted.length - 1]?.wavelength ?? 0,
         points: sorted,
         isNormalized: pipeline.config.normalization.enabled,
+        observationTime: meta?.observationTime,
+        exposureTime: meta?.exposureTime,
+        telescope: meta?.telescope,
+        instrument: meta?.instrument,
+        observatory: meta?.observatory,
+        observer: meta?.observer,
+        grating: meta?.grating,
+        dispersion: meta?.dispersion,
+        wavelengthPixelSize: meta?.wavelengthPixelSize,
+        centralWavelength: meta?.centralWavelength,
+        binning: meta?.binning,
+        filter: meta?.filter,
+        gain: meta?.gain,
+        temperature: meta?.temperature,
+        airmass: meta?.airmass,
+        ra: meta?.ra,
+        dec: meta?.dec,
+        jd: meta?.jd,
+        mjd: meta?.mjd,
+        equinox: meta?.equinox,
+        radialVelocity: meta?.radialVelocity,
+        resolution: meta?.resolution,
+        notes: meta?.notes,
+        rawHeaders: meta?.rawHeaders,
       };
     }
 
@@ -392,6 +393,30 @@ class PipelineEngine {
       wavelengthMax: sorted[sorted.length - 1]?.wavelength ?? 0,
       points: sorted,
       isNormalized: pipeline.config.normalization.enabled,
+      observationTime: meta?.observationTime,
+      exposureTime: meta?.exposureTime,
+      telescope: meta?.telescope,
+      instrument: meta?.instrument,
+      observatory: meta?.observatory,
+      observer: meta?.observer,
+      grating: meta?.grating,
+      dispersion: meta?.dispersion,
+      wavelengthPixelSize: meta?.wavelengthPixelSize,
+      centralWavelength: meta?.centralWavelength,
+      binning: meta?.binning,
+      filter: meta?.filter,
+      gain: meta?.gain,
+      temperature: meta?.temperature,
+      airmass: meta?.airmass,
+      ra: meta?.ra,
+      dec: meta?.dec,
+      jd: meta?.jd,
+      mjd: meta?.mjd,
+      equinox: meta?.equinox,
+      radialVelocity: meta?.radialVelocity,
+      resolution: meta?.resolution,
+      notes: meta?.notes,
+      rawHeaders: meta?.rawHeaders,
     };
   }
 
