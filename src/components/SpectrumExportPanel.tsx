@@ -20,7 +20,7 @@ import {
   Scale,
 } from 'lucide-react';
 import { executeExport } from '@/lib/exportUtils';
-import type { ExportFormat, ExportOptions } from '@/lib/exportUtils';
+import type { ExportFormat, ExportOptions, ClassificationPair } from '@/lib/exportUtils';
 
 type PointsExportMode = 'summary' | 'flat';
 
@@ -35,6 +35,7 @@ export default function SpectrumExportPanel() {
     spectra,
     classificationResult,
     manualClassificationResult,
+    currentSpectrumId,
   } = useAppStore();
 
   const { canViewSpectrum, currentUser } = useTeamStore();
@@ -84,18 +85,15 @@ export default function SpectrumExportPanel() {
   );
 
   const classificationMap = useMemo(() => {
-    const map: Record<string, { auto: typeof classificationResult; manual: typeof manualClassificationResult }> = {};
-    if (classificationResult || manualClassificationResult) {
-      const currentId = selectedSpectra.find((s) => s.id)?.id;
-      if (currentId) {
-        map[currentId] = {
-          auto: classificationResult,
-          manual: manualClassificationResult,
-        };
-      }
+    const map: Record<string, ClassificationPair> = {};
+    if ((classificationResult || manualClassificationResult) && currentSpectrumId) {
+      map[currentSpectrumId] = {
+        auto: classificationResult,
+        manual: manualClassificationResult,
+      };
     }
     return map;
-  }, [classificationResult, manualClassificationResult, selectedSpectra]);
+  }, [classificationResult, manualClassificationResult, currentSpectrumId]);
 
   const handleExport = () => {
     if (selectedSpectra.length === 0 || isExporting) return;

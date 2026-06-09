@@ -4,11 +4,13 @@ import type {
   SpectrumPoint,
   ClassificationResult,
   ManualClassificationResult,
+  SharedClassificationResult,
 } from '@/types';
 import {
   normalizeSpectrumSigmaClipping,
   measureEquivalentWidth,
   computeLineRatios,
+  classifySpectrum,
   WAVELENGTHS,
 } from '@/lib/spectralAnalysis';
 import { SPECTRAL_LINES } from '@/data/astronomy';
@@ -161,7 +163,7 @@ export const getSpectrumMeta = (s: SpectrumData): SpectrumExportMeta => ({
 
 export const getClassificationData = (
   autoResult: ClassificationResult | null,
-  manualResult: ManualClassificationResult | null
+  manualResult: ManualClassificationResult | SharedClassificationResult | null
 ): ClassificationExportData => {
   const data: ClassificationExportData = {};
   if (autoResult) {
@@ -178,6 +180,40 @@ export const getClassificationData = (
     data.manualConfirmedAt = manualResult.confirmedAt;
   }
   return data;
+};
+
+export interface ClassificationPair {
+  auto: ClassificationResult | null;
+  manual: ManualClassificationResult | SharedClassificationResult | null;
+}
+
+export const getSpectrumClassificationPair = (
+  spectrum: SpectrumData,
+  fallbackMap?: Record<string, ClassificationPair>
+): ClassificationPair => {
+  const normalizedPoints = ensureNormalized(spectrum);
+  let auto: ClassificationResult | null = null;
+  try {
+    auto = classifySpectrum(normalizedPoints);
+  } catch {
+    auto = null;
+  }
+
+  let manual: ManualClassificationResult | SharedClassificationResult | null = null;
+  if (spectrum.sharedClassifications && spectrum.sharedClassifications.length > 0) {
+    const sorted = [...spectrum.sharedClassifications].sort(
+      (a, b) => new Date(b.classifiedAt).getTime() - new Date(a.classifiedAt).getTime()
+    );
+    manual = sorted[0];
+  }
+  if (!manual && fallbackMap && fallbackMap[spectrum.id]) {
+    manual = fallbackMap[spectrum.id].manual;
+    if (!auto && fallbackMap[spectrum.id].auto) {
+      auto = fallbackMap[spectrum.id].auto;
+    }
+  }
+
+  return { auto, manual };
 };
 
 export const getLineMeasurements = (
@@ -223,13 +259,13 @@ const ensureNormalized = (s: SpectrumData): SpectrumPoint[] => {
 export interface BuildFlatRowsOptions {
   spectra: SpectrumData[];
   options: ExportOptions;
-  classificationMap?: Record<string, { auto: ClassificationResult | null; manual: ManualClassificationResult | null }>;
+  classificationMap?: Record<string, ClassificationPair>;
 }
 
 export const buildFlatExportRows = ({
   spectra,
   options,
-  classificationMap = {},
+  classificationMap,
 }: BuildFlatRowsOptions): FlatExportRow[] => {
   const rows: FlatExportRow[] = [];
 
@@ -263,7 +299,7 @@ export interface SpectrumSummaryRow extends SpectrumExportMeta {
 export const buildSummaryExportRows = ({
   spectra,
   options,
-  classificationMap = {},
+  classificationMap,
 }: BuildFlatRowsOptions): Record<string, unknown>[] => {
   const rows: Record<string, unknown>[] = [];
 
@@ -276,8 +312,8 @@ export const buildSummaryExportRows = ({
     }
 
     if (options.includeClassification) {
-      const cls = classificationMap[s.id];
-      const clsData = getClassificationData(cls?.auto ?? null, cls?.manual ?? null);
+      const pair = getSpectrumClassificationPair(s, classificationMap);
+      const clsData = getClassificationData(pair.auto, pair.manual);
       for (const f of classificationFields) {
         row[f] = clsData[f];
       }
@@ -305,7 +341,7 @@ export interface JsonExportPayload {
   };
   spectra: {
     meta: SpectrumExportMeta;
-    originalPoints: SpectrumPoint[];
+    originalPoints?: SpectrumPoint[];
     normalizedPoints?: SpectrumPoint[];
     classification?: ClassificationExportData;
     lineMeasurements?: LineMeasurementExportData;
@@ -316,7 +352,7 @@ export const buildJsonExport = ({
   spectra,
   options,
   format,
-  classificationMap = {},
+  classificationMap,
 }: BuildFlatRowsOptions & { format: ExportFormat }): JsonExportPayload => {
   return {
     exportMetadata: {
@@ -334,8 +370,8 @@ export const buildJsonExport = ({
         entry.normalizedPoints = ensureNormalized(s);
       }
       if (options.includeClassification) {
-        const cls = classificationMap[s.id];
-        entry.classification = getClassificationData(cls?.auto ?? null, cls?.manual ?? null);
+        const pair = getSpectrumClassificationPair(s, classificationMap);
+        entry.classification = getClassificationData(pair.auto, pair.manual);
       }
       if (options.includeLineMeasurements) {
         entry.lineMeasurements = getLineMeasurements(s.points);
@@ -410,7 +446,7 @@ export interface ExecuteExportParams {
   spectra: SpectrumData[];
   format: ExportFormat;
   options: ExportOptions;
-  classificationMap?: Record<string, { auto: ClassificationResult | null; manual: ManualClassificationResult | null }>;
+  classificationMap?: Record<string, ClassificationPair>;
   includePoints?: 'flat' | 'summary' | 'none';
 }
 
@@ -418,13 +454,21 @@ export const executeExport = ({
   spectra,
   format,
   options,
-  classificationMap = {},
+  classificationMap,
   includePoints = 'summary',
 }: ExecuteExportParams) => {
   if (spectra.length === 0) return;
 
   if (format === 'json') {
     const payload = buildJsonExport({ spectra, options, format, classificationMap });
+    if (includePoints === 'none') {
+      payload.spectra = payload.spectra.map((s) => ({
+        meta: s.meta,
+        classification: s.classification,
+        lineMeasurements: s.lineMeasurements,
+      }));
+      console.warn('[exportUtils] includePoints="none" 模式：已排除所有采样点数据，仅保留元数据、分类结果和谱线测量值');
+    }
     const content = JSON.stringify(payload, null, 2);
     triggerBrowserDownload(
       content,
@@ -446,12 +490,17 @@ export const executeExport = ({
     const headers = buildFlatCsvHeader(options);
     const content = formatAsDelimited(flatRows, headers, delimiter);
     triggerBrowserDownload(content, generateFilename('spectra_points', format), mime);
-  } else {
-    const summaryRows = buildSummaryExportRows({ spectra, options, classificationMap });
-    const headers = buildSummaryCsvHeader(options);
-    const content = formatAsDelimited(summaryRows, headers, delimiter);
-    triggerBrowserDownload(content, generateFilename('spectra_summary', format), mime);
+    return;
   }
+
+  if (includePoints === 'none') {
+    console.warn('[exportUtils] includePoints="none" 模式：CSV/TSV 下等价于摘要模式（无采样点行），仅输出元数据、分类结果和谱线测量值');
+  }
+
+  const summaryRows = buildSummaryExportRows({ spectra, options, classificationMap });
+  const headers = buildSummaryCsvHeader(options);
+  const content = formatAsDelimited(summaryRows, headers, delimiter);
+  triggerBrowserDownload(content, generateFilename('spectra_summary', format), mime);
 };
 
 export { exportMetaFields, classificationFields, lineMeasurementFields, getLineWavelength };

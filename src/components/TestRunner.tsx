@@ -3,6 +3,7 @@ import { runAllTests } from '@/tests/spectralAnalysis.test';
 import { runAllPersistenceTests } from '@/tests/persistence.test';
 import { runAlertTests } from '@/tests/alertEngine.test';
 import { runAllPipelineTests } from '@/tests/pipeline.test';
+import { runAllExportTests } from '@/tests/exportUtils.test';
 import { Play, CheckCircle2, XCircle, Terminal, Loader2 } from 'lucide-react';
 
 export default function TestRunner() {
@@ -22,6 +23,11 @@ export default function TestRunner() {
   } | null>(null);
 
   const [pipelineResults, setPipelineResults] = useState<{
+    passed: string[];
+    failed: { name: string; error: string }[];
+  } | null>(null);
+
+  const [exportResults, setExportResults] = useState<{
     passed: string[];
     failed: { name: string; error: string }[];
   } | null>(null);
@@ -58,6 +64,11 @@ export default function TestRunner() {
     }
   };
 
+  const handleRunExport = () => {
+    const r = runAllExportTests();
+    setExportResults(r);
+  };
+
   const handleRunAll = async () => {
     setIsRunning(true);
     try {
@@ -69,6 +80,8 @@ export default function TestRunner() {
       setPersistenceResults(pr);
       const plr = await runAllPipelineTests();
       setPipelineResults(plr);
+      const er = runAllExportTests();
+      setExportResults(er);
     } finally {
       setIsRunning(false);
     }
@@ -169,6 +182,14 @@ export default function TestRunner() {
             处理流水线测试
           </button>
           <button
+            onClick={handleRunExport}
+            disabled={isRunning}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-pink-700/60 hover:bg-pink-600 disabled:opacity-40 text-white font-medium transition-colors"
+          >
+            <Play className="w-3.5 h-3.5" />
+            导出工具测试
+          </button>
+          <button
             onClick={handleRunAll}
             disabled={isRunning}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-emerald-700/60 hover:bg-emerald-600 disabled:opacity-40 text-white font-medium transition-colors"
@@ -183,7 +204,7 @@ export default function TestRunner() {
         </div>
       </div>
 
-      {!spectralResults && !persistenceResults && !alertResults && !pipelineResults && (
+      {!spectralResults && !persistenceResults && !alertResults && !pipelineResults && !exportResults && (
         <div className="text-xs text-slate-500 px-2">
           光谱分析测试：归一化算法、等值宽度测量、光谱分类、谱线比值等。
           <br />
@@ -192,6 +213,8 @@ export default function TestRunner() {
           持久化测试：IndexedDB 读写、localStorage 数据迁移、写入队列 latest-wins 策略等。
           <br />
           处理流水线测试：天光扣除、宇宙线剔除、波长定标、归一化步骤及异步任务队列。
+          <br />
+          导出工具测试：元数据提取、每条光谱独立分类（sharedClassifications）、CSV/TSV/JSON 格式化、includePoints='none' 模式等。
         </div>
       )}
 
@@ -199,6 +222,7 @@ export default function TestRunner() {
       {renderResults(alertResults, 'Be 星预警引擎测试')}
       {renderResults(persistenceResults, '持久化与同步测试')}
       {renderResults(pipelineResults, '光谱处理流水线测试')}
+      {renderResults(exportResults, '数据导出工具测试')}
     </div>
   );
 }
