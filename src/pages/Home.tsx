@@ -8,6 +8,7 @@ import {
   Info,
   Loader2,
   ListTodo,
+  Users,
 } from 'lucide-react';
 import SpectrumImporter from '@/components/SpectrumImporter';
 import SpectrumList from '@/components/SpectrumList';
@@ -17,9 +18,10 @@ import BeStarMonitor from '@/components/BeStarMonitor';
 import ProjectSelector from '@/components/ProjectSelector';
 import SyncStatus from '@/components/SyncStatus';
 import TaskQueuePanel from '@/components/TaskQueuePanel';
+import TeamPanel from '@/components/TeamPanel';
 import { useAppStore } from '@/store/appStore';
 
-type TabType = 'classify' | 'monitor' | 'help';
+type TabType = 'classify' | 'monitor' | 'team' | 'help';
 
 export default function Home() {
   const { spectra, clearAll, beObservations, isInitializing, initError, initializeData } = useAppStore();
@@ -95,6 +97,17 @@ export default function Home() {
               Be 星监测
             </button>
             <button
+              onClick={() => setActiveTab('team')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-sm font-medium transition-all ${
+                activeTab === 'team'
+                  ? 'bg-cyan-900/40 text-cyan-300 border border-cyan-700/50'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              团队协作
+            </button>
+            <button
               onClick={() => setActiveTab('help')}
               className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-sm font-medium transition-all ${
                 activeTab === 'help'
@@ -166,6 +179,69 @@ export default function Home() {
           <section className="p-5 rounded-xl bg-slate-900/60 border border-slate-800/80 shadow-xl">
             <BeStarMonitor />
           </section>
+        )}
+
+        {activeTab === 'team' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <aside className="lg:col-span-4 space-y-4">
+              <section className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 shadow-xl">
+                <TeamPanel />
+              </section>
+            </aside>
+            <div className="lg:col-span-8">
+              <section className="p-5 rounded-xl bg-slate-900/60 border border-slate-800/80 shadow-xl">
+                <div className="space-y-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+                      <Users className="w-5 h-5 text-violet-400" />
+                      团队协作与光谱共享
+                    </h2>
+                    <p className="text-sm text-slate-400">
+                      创建研究团队，邀请成员，共享光谱数据和分类结果，提升协作效率。
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700/60">
+                      <h3 className="text-sm font-semibold text-violet-300 mb-2">👥 团队管理</h3>
+                      <ul className="text-xs text-slate-400 space-y-1.5">
+                        <li>• 创建和管理多个研究团队</li>
+                        <li>• 设置团队成员角色（所有者/管理员/成员）</li>
+                        <li>• 通过邮箱邀请新成员加入</li>
+                        <li>• 管理团队成员权限</li>
+                      </ul>
+                    </div>
+                    <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700/60">
+                      <h3 className="text-sm font-semibold text-cyan-300 mb-2">🔒 权限控制</h3>
+                      <ul className="text-xs text-slate-400 space-y-1.5">
+                        <li>• <strong className="text-red-400">私有</strong>：仅自己可见</li>
+                        <li>• <strong className="text-violet-400">团队可见</strong>：指定团队成员可查看</li>
+                        <li>• <strong className="text-emerald-400">公开</strong>：所有人可查看</li>
+                        <li>• 在光谱列表中点击设置图标配置</li>
+                      </ul>
+                    </div>
+                    <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700/60">
+                      <h3 className="text-sm font-semibold text-amber-300 mb-2">📊 共享分类</h3>
+                      <ul className="text-xs text-slate-400 space-y-1.5">
+                        <li>• 查看每条分类的"分类者"和"分类时间"</li>
+                        <li>• 多个团队成员的分类结果并列展示</li>
+                        <li>• 自动检测分类结果的一致性</li>
+                        <li>• 对比不同成员的分类差异</li>
+                      </ul>
+                    </div>
+                    <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700/60">
+                      <h3 className="text-sm font-semibold text-pink-300 mb-2">💡 使用提示</h3>
+                      <ul className="text-xs text-slate-400 space-y-1.5">
+                        <li>• 在"光谱分类"页面配置光谱可见性</li>
+                        <li>• 手动分类时可勾选"共享分类结果"</li>
+                        <li>• 分类面板底部查看团队成员共享分类</li>
+                        <li>• 左上面板可快速切换当前工作团队</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
         )}
 
         {activeTab === 'help' && (

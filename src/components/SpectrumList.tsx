@@ -1,5 +1,19 @@
+import { useState } from 'react';
 import { useAppStore } from '@/store/appStore';
-import { FileText, Trash2, Check, Calendar, Target, GitCompare, X, Layers } from 'lucide-react';
+import {
+  FileText,
+  Trash2,
+  Check,
+  Calendar,
+  Target,
+  GitCompare,
+  X,
+  Layers,
+  Eye,
+  Settings,
+} from 'lucide-react';
+import { VisibilityBadge } from './VisibilitySettings';
+import VisibilitySettings from './VisibilitySettings';
 
 export default function SpectrumList() {
   const {
@@ -13,6 +27,8 @@ export default function SpectrumList() {
     clearComparisonSelection,
   } = useAppStore();
 
+  const [settingsSpectrumId, setSettingsSpectrumId] = useState<string | null>(null);
+
   const handleItemClick = (spectrumId: string) => {
     if (comparisonMode.enabled) {
       toggleComparisonSpectrum(spectrumId);
@@ -20,6 +36,8 @@ export default function SpectrumList() {
       setCurrentSpectrum(spectrumId);
     }
   };
+
+  const settingsSpectrum = spectra.find((s) => s.id === settingsSpectrumId);
 
   if (spectra.length === 0) {
     return (
@@ -31,6 +49,15 @@ export default function SpectrumList() {
 
   return (
     <div className="space-y-3">
+      {settingsSpectrum && (
+        <div className="p-3 rounded-lg bg-slate-900/80 border border-cyan-700/50">
+          <VisibilitySettings
+            spectrum={settingsSpectrum}
+            onClose={() => setSettingsSpectrumId(null)}
+          />
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <button
           onClick={toggleComparisonMode}
@@ -81,14 +108,16 @@ export default function SpectrumList() {
             comparisonMode.enabled &&
             !compareSelected &&
             comparisonMode.selectedSpectrumIds.length >= 3;
+          const isSettingsOpen = settingsSpectrumId === s.id;
 
           return (
             <div
               key={s.id}
-              onClick={() => !isDisabled && handleItemClick(s.id)}
-              className={`group flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-all border ${
-                isDisabled
-                  ? 'bg-slate-800/20 border-slate-800/60 opacity-50 cursor-not-allowed'
+              className={`rounded-lg transition-all border ${
+                isSettingsOpen
+                  ? 'bg-cyan-900/20 border-cyan-600/60'
+                  : isDisabled
+                  ? 'bg-slate-800/20 border-slate-800/60 opacity-50'
                   : comparisonMode.enabled && compareSelected
                   ? 'bg-cyan-900/30 border-cyan-600/60 ring-1 ring-cyan-500/40'
                   : comparisonMode.enabled
@@ -99,65 +128,91 @@ export default function SpectrumList() {
               }`}
             >
               <div
-                className={`w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 ${
-                  comparisonMode.enabled && compareSelected
-                    ? 'bg-cyan-700/40 text-cyan-300'
-                    : active
-                    ? 'bg-cyan-700/40 text-cyan-300'
-                    : 'bg-slate-700/60 text-slate-400'
-                }`}
+                onClick={() => !isDisabled && handleItemClick(s.id)}
+                className={`group flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-all`}
               >
-                {comparisonMode.enabled && compareSelected ? (
-                  <span className="text-xs font-bold">#{compareIndex + 1}</span>
-                ) : (
-                  <FileText className="w-4 h-4" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  {active && !comparisonMode.enabled && (
-                    <Check className="w-3 h-3 text-cyan-400" />
+                <div
+                  className={`w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 ${
+                    comparisonMode.enabled && compareSelected
+                      ? 'bg-cyan-700/40 text-cyan-300'
+                      : active
+                      ? 'bg-cyan-700/40 text-cyan-300'
+                      : 'bg-slate-700/60 text-slate-400'
+                  }`}
+                >
+                  {comparisonMode.enabled && compareSelected ? (
+                    <span className="text-xs font-bold">#{compareIndex + 1}</span>
+                  ) : (
+                    <FileText className="w-4 h-4" />
                   )}
-                  {comparisonMode.enabled && compareSelected && (
-                    <Check className="w-3 h-3 text-cyan-400" />
-                  )}
-                  <span
-                    className={`text-sm font-medium truncate ${
-                      comparisonMode.enabled && compareSelected
-                        ? 'text-cyan-200'
-                        : active
-                        ? 'text-cyan-200'
-                        : 'text-slate-200'
-                    }`}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {active && !comparisonMode.enabled && (
+                      <Check className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                    )}
+                    {comparisonMode.enabled && compareSelected && (
+                      <Check className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                    )}
+                    <span
+                      className={`text-sm font-medium truncate ${
+                        comparisonMode.enabled && compareSelected
+                          ? 'text-cyan-200'
+                          : active
+                          ? 'text-cyan-200'
+                          : 'text-slate-200'
+                      }`}
+                    >
+                      {s.name}
+                    </span>
+                    <VisibilityBadge visibility={s.visibility} />
+                  </div>
+                  <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-500">
+                    <span className="inline-flex items-center gap-0.5">
+                      <Target className="w-3 h-3" />
+                      {s.targetName}
+                    </span>
+                    <span className="inline-flex items-center gap-0.5">
+                      <Calendar className="w-3 h-3" />
+                      {s.observationDate}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-600 font-mono mt-0.5 flex items-center gap-2 flex-wrap">
+                    <span>
+                      {s.wavelengthMin.toFixed(0)}–{s.wavelengthMax.toFixed(0)} Å · {s.points.length} pts
+                      {s.isNormalized && ' · 已归一化'}
+                    </span>
+                    {s.sharedClassifications && s.sharedClassifications.length > 0 && (
+                      <span className="inline-flex items-center gap-0.5 text-violet-400">
+                        <Eye className="w-2.5 h-2.5" />
+                        {s.sharedClassifications.length} 条共享分类
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSettingsSpectrumId(isSettingsOpen ? null : s.id);
+                    }}
+                    className="p-1 rounded hover:bg-slate-700/60 text-slate-400 hover:text-cyan-400 transition-colors"
+                    title="可见权限设置"
                   >
-                    {s.name}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-500">
-                  <span className="inline-flex items-center gap-0.5">
-                    <Target className="w-3 h-3" />
-                    {s.targetName}
-                  </span>
-                  <span className="inline-flex items-center gap-0.5">
-                    <Calendar className="w-3 h-3" />
-                    {s.observationDate}
-                  </span>
-                </div>
-                <div className="text-[10px] text-slate-600 font-mono mt-0.5">
-                  {s.wavelengthMin.toFixed(0)}–{s.wavelengthMax.toFixed(0)} Å · {s.points.length} pts
-                  {s.isNormalized && ' · 已归一化'}
+                    <Settings className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteSpectrum(s.id);
+                    }}
+                    className="p-1 rounded hover:bg-red-900/50 text-slate-500 hover:text-red-400 transition-all flex-shrink-0"
+                    title="删除"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  deleteSpectrum(s.id);
-                }}
-                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-900/50 text-slate-500 hover:text-red-400 transition-all flex-shrink-0"
-                title="删除"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
             </div>
           );
         })}

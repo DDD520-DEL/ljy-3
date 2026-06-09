@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useAppStore } from '@/store/appStore';
+import { useTeamStore } from '@/store/teamStore';
 import { classifySpectrum, measureEquivalentWidth, computeLineRatios, WAVELENGTHS, buildEWComparisonTable, getRankedCandidateTemplates, createManualClassification, computeTemplateMatchScoreWithOffsets } from '@/lib/spectralAnalysis';
 import { MK_TEMPLATES } from '@/data/astronomy';
-import type { MKTemplate } from '@/types';
-import { Sparkles, AlertTriangle, CheckCircle2, Star, Thermometer, Ruler, GitCompare, Table2, Sliders, Lock, Unlock, RotateCcw, Save, UserCircle, Bot, ChevronDown, ChevronUp, Minus, Plus } from 'lucide-react';
+import type { MKTemplate, SharedClassificationResult } from '@/types';
+import { Sparkles, AlertTriangle, CheckCircle2, Star, Thermometer, Ruler, GitCompare, Table2, Sliders, Lock, Unlock, RotateCcw, Save, UserCircle, Bot, ChevronDown, ChevronUp, Minus, Plus, Users, Clock, Share2 } from 'lucide-react';
 
 const SPECTRAL_TYPE_COLORS: Record<string, string> = {
   O: 'from-blue-400 to-blue-600',
@@ -60,12 +61,33 @@ export default function ClassificationPanel() {
     setLuminosityOffset,
     setTemplateIntensityScale,
     resetManualTuning,
+    addSharedClassification,
   } = useAppStore();
+
+  const { buildSharedClassification, currentUser } = useTeamStore();
 
   const [showCandidateList, setShowCandidateList] = useState(false);
   const [reviewerNotes, setReviewerNotes] = useState('');
+  const [showSharedClassifications, setShowSharedClassifications] = useState(true);
+  const [shareOnConfirm, setShareOnConfirm] = useState(true);
 
   const current = spectra.find((s) => s.id === currentSpectrumId);
+
+  const sharedClassifications = useMemo(() => {
+    if (!current?.sharedClassifications) return [] as SharedClassificationResult[];
+    return current.sharedClassifications.sort(
+      (a, b) => new Date(b.classifiedAt).getTime() - new Date(a.classifiedAt).getTime()
+    );
+  }, [current]);
+
+  const getAvatarInitials = (name: string) => {
+    return name
+      .split(' ')
+      .map((p) => p[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  };
 
   const comparisonSpectra = useMemo(() => {
     if (comparisonMode.enabled && comparisonMode.selectedSpectrumIds.length >= 2) {
@@ -124,6 +146,11 @@ export default function ClassificationPanel() {
       reviewerNotes || undefined
     );
     setManualClassificationResult(result);
+
+    if (shareOnConfirm) {
+      const shared = buildSharedClassification(current.id, result);
+      addSharedClassification(current.id, shared);
+    }
   };
 
   const handleClearManualResult = () => {
@@ -459,6 +486,19 @@ export default function ClassificationPanel() {
                 />
               </div>
 
+              <label className="flex items-center gap-2 p-2 rounded-md bg-slate-800/40 cursor-pointer hover:bg-slate-800/60 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={shareOnConfirm}
+                  onChange={(e) => setShareOnConfirm(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded accent-violet-500"
+                />
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  <Share2 className="w-3 h-3 text-violet-400" />
+                  <span className="text-slate-300">保存为共享分类结果，团队成员可见</span>
+                </div>
+              </label>
+
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleConfirmManualClassification}
@@ -628,8 +668,20 @@ export default function ClassificationPanel() {
                     </div>
                   </div>
                 </div>
-                <div className="text-[10px] text-slate-500 font-mono">
-                  确认于 {new Date(manualClassificationResult.confirmedAt).toLocaleString('zh-CN')}
+                <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono">
+                  <div className="flex items-center gap-1.5">
+                    <div
+                      className="w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white"
+                      style={{ backgroundColor: currentUser.avatarColor }}
+                    >
+                      {getAvatarInitials(currentUser.name)}
+                    </div>
+                    <span>分类者: {currentUser.name}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    <span>{new Date(manualClassificationResult.confirmedAt).toLocaleString('zh-CN')}</span>
+                  </div>
                 </div>
                 {manualClassificationResult.reviewerNotes && (
                   <div className="p-2 rounded bg-slate-800/50 border border-slate-700/50">
@@ -674,6 +726,193 @@ export default function ClassificationPanel() {
                     <AlertTriangle className="w-3 h-3" />
                     存在差异
                   </span>
+                )}
+              </div>
+            )}
+
+            {sharedClassifications.length > 0 && (
+              <div className="space-y-2">
+                <button
+                  onClick={() => setShowSharedClassifications(!showSharedClassifications)}
+                  className="w-full flex items-center justify-between p-2 rounded-md bg-slate-800/40 border border-slate-700/60 hover:bg-slate-800/60 transition-colors"
+                >
+                  <span className="text-[11px] font-semibold text-violet-300 flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5" />
+                    团队成员共享分类
+                    <span className="text-[10px] text-slate-500">
+                      ({sharedClassifications.length} 条)
+                    </span>
+                  </span>
+                  {showSharedClassifications ? (
+                    <ChevronUp className="w-3.5 h-3.5 text-slate-500" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+                  )}
+                </button>
+
+                {showSharedClassifications && (
+                  <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                    {sharedClassifications.length >= 2 && (
+                      <div className="p-2.5 rounded-md bg-slate-800/30 border border-violet-800/40">
+                        <div className="text-[10px] font-semibold text-violet-300 mb-2 flex items-center gap-1">
+                          <GitCompare className="w-3 h-3" />
+                          分类结果一致性对比
+                        </div>
+                        <div className="grid gap-1.5">
+                          {(() => {
+                            const results = sharedClassifications;
+                            const types = results.map((r) => `${r.spectralType}${r.luminosityClass}`);
+                            const uniqueTypes = [...new Set(types)];
+                            const majorityType = uniqueTypes.length === 1;
+                            return (
+                              <>
+                                <div className="flex items-center gap-2 text-[11px]">
+                                  <span className="text-slate-400">一致性:</span>
+                                  {majorityType ? (
+                                    <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
+                                      <CheckCircle2 className="w-3 h-3" />
+                                      完全一致
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-amber-400 font-medium">
+                                      <AlertTriangle className="w-3 h-3" />
+                                      存在 {uniqueTypes.length} 种不同结果
+                                    </span>
+                                  )}
+                                </div>
+                                {!majorityType && (
+                                  <div className="flex flex-wrap gap-1">
+                                    {uniqueTypes.map((type) => {
+                                      const count = types.filter((t) => t === type).length;
+                                      return (
+                                        <span
+                                          key={type}
+                                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-slate-700/60 text-slate-300 font-mono"
+                                        >
+                                          {type}
+                                          <span className="text-slate-500">×{count}</span>
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    )}
+
+                    {sharedClassifications.map((shared) => {
+                      const isCurrentUser = shared.author.userId === currentUser.id;
+                      return (
+                        <div
+                          key={`${shared.author.userId}-${shared.classifiedAt}`}
+                          className={`space-y-1.5 p-2.5 rounded-lg border ${
+                            isCurrentUser
+                              ? 'bg-violet-900/15 border-violet-800/40'
+                              : 'bg-slate-800/30 border-slate-700/50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <div
+                                className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white flex-shrink-0"
+                                style={{ backgroundColor: shared.author.avatarColor }}
+                              >
+                                {getAvatarInitials(shared.author.userName)}
+                              </div>
+                              <span className={`text-[11px] font-semibold ${isCurrentUser ? 'text-violet-200' : 'text-slate-200'}`}>
+                                {shared.author.userName}
+                                {isCurrentUser && <span className="text-violet-400"> (我)</span>}
+                              </span>
+                              <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] bg-slate-700/60 text-slate-400">
+                                <UserCircle className="w-2 h-2" />
+                                {shared.source === 'manual' ? '人工' : '自动'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 text-[9px] text-slate-500 font-mono">
+                              <Clock className="w-2.5 h-2.5" />
+                              {new Date(shared.classifiedAt).toLocaleString('zh-CN', {
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </div>
+                          </div>
+
+                          <div
+                            className={`relative p-2 rounded-md bg-gradient-to-br ${SPECTRAL_TYPE_COLORS[shared.spectralType] || 'from-slate-600 to-slate-700'} shadow overflow-hidden`}
+                          >
+                            <div className="absolute inset-0 bg-slate-900/40" />
+                            <div className="relative flex items-baseline justify-between">
+                              <div className="flex items-baseline gap-1.5">
+                                <span
+                                  className={`text-xl font-bold ${
+                                    shared.spectralType === 'O'
+                                      ? 'text-blue-100'
+                                      : shared.spectralType === 'A' || shared.spectralType === 'F'
+                                      ? 'text-slate-900'
+                                      : 'text-white'
+                                  }`}
+                                >
+                                  {shared.spectralType}
+                                  <sub className="text-xs ml-0.5">{shared.luminosityClass}</sub>
+                                </span>
+                                <span
+                                  className={`text-[10px] font-medium ${
+                                    shared.spectralType === 'A' || shared.spectralType === 'F'
+                                      ? 'text-slate-700'
+                                      : 'text-white/70'
+                                  }`}
+                                >
+                                  {LUMINOSITY_NAMES[shared.luminosityClass] || shared.luminosityClass}
+                                </span>
+                              </div>
+                              <span
+                                className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                  shared.confidence > 70
+                                    ? 'bg-emerald-900/50 text-emerald-200'
+                                    : shared.confidence > 40
+                                    ? 'bg-amber-900/50 text-amber-200'
+                                    : 'bg-red-900/50 text-red-200'
+                                }`}
+                              >
+                                {shared.confidence.toFixed(0)}%
+                              </span>
+                            </div>
+                          </div>
+
+                          {shared.reviewerNotes && (
+                            <div className="p-1.5 rounded bg-slate-800/50 border border-slate-700/40">
+                              <div className="text-[9px] text-slate-500">备注</div>
+                              <div className="text-[10px] text-slate-300">{shared.reviewerNotes}</div>
+                            </div>
+                          )}
+
+                          {shared.matchedFeatures && shared.matchedFeatures.length > 0 && (
+                            <div className="flex flex-wrap gap-0.5">
+                              {shared.matchedFeatures.slice(0, 4).map((f) => (
+                                <span
+                                  key={f}
+                                  className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded-full text-[8px] bg-emerald-900/30 text-emerald-400 border border-emerald-800/40"
+                                >
+                                  <CheckCircle2 className="w-1.5 h-1.5" />
+                                  {f}
+                                </span>
+                              ))}
+                              {shared.matchedFeatures.length > 4 && (
+                                <span className="text-[8px] text-slate-500">
+                                  +{shared.matchedFeatures.length - 4}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             )}

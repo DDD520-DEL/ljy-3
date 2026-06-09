@@ -3,17 +3,6 @@ export interface SpectrumPoint {
   intensity: number;
 }
 
-export interface SpectrumData {
-  id: string;
-  name: string;
-  targetName: string;
-  observationDate: string;
-  wavelengthMin: number;
-  wavelengthMax: number;
-  points: SpectrumPoint[];
-  isNormalized: boolean;
-}
-
 export interface SpectralLine {
   element: string;
   ion: string;
@@ -335,6 +324,85 @@ export interface ObservationLogEntry {
   notes?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export type VisibilityType = 'private' | 'team' | 'public';
+
+export type TeamRole = 'owner' | 'admin' | 'member';
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  avatarColor: string;
+  createdAt: string;
+}
+
+export interface TeamMember {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  avatarColor: string;
+  role: TeamRole;
+  joinedAt: string;
+  invitedBy?: string;
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  description?: string;
+  ownerId: string;
+  members: TeamMember[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ClassificationAuthor {
+  userId: string;
+  userName: string;
+  avatarColor: string;
+}
+
+export interface SharedClassificationResult extends ManualClassificationResult {
+  author: ClassificationAuthor;
+  classifiedAt: string;
+  spectrumId: string;
+}
+
+export interface SpectrumData {
+  id: string;
+  name: string;
+  targetName: string;
+  observationDate: string;
+  wavelengthMin: number;
+  wavelengthMax: number;
+  points: SpectrumPoint[];
+  isNormalized: boolean;
+  visibility: VisibilityType;
+  ownerId: string;
+  ownerName: string;
+  teamIds?: string[];
+  sharedClassifications: SharedClassificationResult[];
+}
+
+export interface TeamInvitation {
+  id: string;
+  teamId: string;
+  teamName: string;
+  invitedBy: string;
+  invitedByName: string;
+  inviteeEmail: string;
+  status: 'pending' | 'accepted' | 'declined' | 'expired';
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface TeamState {
+  teams: Team[];
+  currentTeamId: string | null;
+  currentUser: User;
+  invitations: TeamInvitation[];
 }
 
 export interface ProjectData {

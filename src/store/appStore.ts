@@ -16,6 +16,8 @@ import type {
   AlertEvaluationResult,
   ManualTuningState,
   ManualClassificationResult,
+  VisibilityType,
+  SharedClassificationResult,
 } from '@/types';
 import { generateSampleSpectrum, SPECTRAL_LINES, MK_TEMPLATES } from '@/data/astronomy';
 import { syncManager } from '@/lib/syncManager';
@@ -105,7 +107,24 @@ const createEmptyProjectData = (): ProjectData => ({
   alerts: [],
 });
 
+const getDefaultUser = () => {
+  try {
+    const { useTeamStore } = require('@/store/teamStore');
+    const state = useTeamStore.getState();
+    return state.currentUser;
+  } catch {
+    return {
+      id: 'default-user',
+      name: '当前用户',
+      email: 'user@example.com',
+      avatarColor: '#06b6d4',
+      createdAt: new Date().toISOString(),
+    };
+  }
+};
+
 const createSampleProjectData = (): ProjectData => {
+  const user = getDefaultUser();
   const sampleTypes = ['O9V', 'A0V', 'A5V', 'B0V', 'G2V', 'K0V', 'M0V'];
   const spectraList: SpectrumData[] = sampleTypes.map((type, idx) => {
     const wlPoints = generateSampleSpectrum(type, 0.015);
@@ -118,6 +137,11 @@ const createSampleProjectData = (): ProjectData => {
       wavelengthMax: Math.max(...wlPoints.map((p) => p.wavelength)),
       points: wlPoints,
       isNormalized: true,
+      visibility: (idx < 2 ? 'private' : idx < 5 ? 'team' : 'public') as VisibilityType,
+      ownerId: user.id,
+      ownerName: user.name,
+      teamIds: idx < 2 ? [] : undefined,
+      sharedClassifications: [],
     };
   });
 
@@ -272,6 +296,8 @@ interface AppState {
   addSpectrum: (spectrum: SpectrumData) => void;
   setCurrentSpectrum: (id: string | null) => void;
   deleteSpectrum: (id: string) => void;
+  setSpectrumVisibility: (spectrumId: string, visibility: VisibilityType, teamIds?: string[]) => void;
+  addSharedClassification: (spectrumId: string, classification: SharedClassificationResult) => void;
   addBeObservation: (obs: BeStarObservation) => void;
   setSelectedTarget: (name: string) => void;
   setClassificationResult: (result: ClassificationResult | null) => void;
@@ -456,13 +482,70 @@ export const useAppStore = create<AppState>()(
       addSpectrum: (spectrum) =>
         set((state) => {
           if (!state.currentProjectId) return state;
+          const user = getDefaultUser();
+          const enrichedSpectrum: SpectrumData = {
+            visibility: 'private' as VisibilityType,
+            ownerId: user.id,
+            ownerName: user.name,
+            sharedClassifications: [],
+            ...spectrum,
+          };
           const newProjects = updateProjectData(
             state.projects,
             state.currentProjectId,
             (data) => ({
               ...data,
-              spectra: [...data.spectra, spectrum],
-              currentSpectrumId: data.currentSpectrumId || spectrum.id,
+              spectra: [...data.spectra, enrichedSpectrum],
+              currentSpectrumId: data.currentSpectrumId || enrichedSpectrum.id,
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
+            ...syncProjectToState(newProjects, state.currentProjectId),
+          };
+        }),
+
+      setSpectrumVisibility: (spectrumId: string, visibility: VisibilityType, teamIds?: string[]) =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              spectra: data.spectra.map((s) =>
+                s.id === spectrumId
+                  ? { ...s, visibility, teamIds: teamIds ?? s.teamIds }
+                  : s
+              ),
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
+            ...syncProjectToState(newProjects, state.currentProjectId),
+          };
+        }),
+
+      addSharedClassification: (spectrumId: string, classification: SharedClassificationResult) =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              spectra: data.spectra.map((s) => {
+                if (s.id !== spectrumId) return s;
+                const others = (s.sharedClassifications || []).filter(
+                  (c) => c.author.userId !== classification.author.userId
+                );
+                return {
+                  ...s,
+                  sharedClassifications: [...others, classification],
+                };
+              }),
             })
           );
           void persistProjects(newProjects);
