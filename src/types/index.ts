@@ -476,3 +476,94 @@ export interface ProjectData {
   alertConfig: AlertRuleConfig;
   alerts: BeStarAlert[];
 }
+
+export type CelestialObjectType = 'star' | 'planet' | 'deep_sky' | 'moon' | 'sun';
+
+export interface CelestialObject {
+  id: string;
+  name: string;
+  commonNames?: string[];
+  type: CelestialObjectType;
+  ra: number;
+  dec: number;
+  magnitude?: number;
+  distance?: number;
+  distanceUnit?: 'ly' | 'pc' | 'au';
+  spectralType?: string;
+  constellation?: string;
+  description?: string;
+}
+
+export interface EquatorialCoordinates {
+  ra: number;
+  dec: number;
+  raHours?: string;
+  decDegrees?: string;
+}
+
+export interface HorizontalCoordinates {
+  altitude: number;
+  azimuth: number;
+}
+
+export interface ApparentPosition {
+  ra: number;
+  dec: number;
+  altitude: number;
+  azimuth: number;
+  hourAngle: number;
+  airmass: number;
+}
+
+export interface SunTimes {
+  sunrise: Date;
+  sunset: Date;
+  civilTwilightStart: Date;
+  civilTwilightEnd: Date;
+  nauticalTwilightStart: Date;
+  nauticalTwilightEnd: Date;
+  astronomicalTwilightStart: Date;
+  astronomicalTwilightEnd: Date;
+  solarNoon: Date;
+}
+
+export interface ObservationWindow {
+  startTime: Date;
+  endTime: Date;
+  durationMinutes: number;
+  description: string;
+  altitudeRange: { min: number; max: number };
+  airmassRange: { min: number; max: number };
+}
+
+export interface EphemerisResult {
+  object: CelestialObject;
+  j2000: EquatorialCoordinates;
+  apparent: ApparentPosition;
+  sunTimes: SunTimes;
+  observationWindows: ObservationWindow[];
+  riseTime: Date | null;
+  setTime: Date | null;
+  transitTime: Date | null;
+  transitAltitude: number;
+  isCircumpolar: boolean;
+  isNeverRises: boolean;
+  observerLocation: ObserverLocation;
+  calculationTime: Date;
+}
+
+export interface ObserverLocation {
+  latitude: number;
+  longitude: number;
+  elevation?: number;
+  name?: string;
+  timezone?: string;
+}
+
+export interface TimelineEvent {
+  id: string;
+  time: Date;
+  label: string;
+  type: 'sunrise' | 'sunset' | 'twilight' | 'rise' | 'transit' | 'set' | 'observation_start' | 'observation_end';
+  description?: string;
+}
