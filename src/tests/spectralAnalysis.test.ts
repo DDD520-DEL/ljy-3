@@ -19,6 +19,7 @@ import {
   getRankedCandidateTemplates,
   createManualClassification,
 } from '@/lib/spectralAnalysis';
+import { initializeSpectrumWithVersion } from '@/lib/versionManager';
 
 const makePoint = (wl: number, int: number): SpectrumPoint => ({ wavelength: wl, intensity: int });
 
@@ -467,7 +468,7 @@ const makeFakeSpectrum = (id: string, name: string, seed: number): SpectrumData 
     }
     pts.push(makePoint(wl, intensity));
   }
-  return {
+  const base = {
     id,
     name,
     targetName: 'Test',
@@ -476,7 +477,12 @@ const makeFakeSpectrum = (id: string, name: string, seed: number): SpectrumData 
     wavelengthMax: 7000,
     points: pts,
     isNormalized: true,
+    visibility: 'private' as const,
+    ownerId: 'test-user',
+    ownerName: 'Test User',
+    sharedClassifications: [],
   };
+  return initializeSpectrumWithVersion(base, 'test-user');
 };
 
 export const testBuildEWComparisonTableEmpty = () => {

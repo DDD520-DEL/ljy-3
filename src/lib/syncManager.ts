@@ -1,6 +1,7 @@
-import type { Project, SyncState, SyncProgress, SyncDirection, PendingSyncItem } from '@/types';
+import type { Project, SyncState, SyncProgress, SyncDirection, PendingSyncItem, SpectrumData } from '@/types';
 import { api } from './api';
 import { localDB } from './localStorage';
+import { initializeSpectrumWithVersion } from './versionManager';
 
 const MAX_RETRY_COUNT = 5;
 const RETRY_DELAY_BASE = 1000;
@@ -261,11 +262,48 @@ class SyncManager {
     }
   }
 
+  private migrateProjectVersions(projects: Project[]): Project[] {
+    let migrated = false;
+    const updatedProjects = projects.map((project) => {
+      const updatedSpectra = project.data.spectra.map((s) => {
+        const spectrum = s as SpectrumData & { currentVersionId?: string; versions?: unknown[] };
+        if (!spectrum.currentVersionId || !Array.isArray(spectrum.versions) || spectrum.versions.length === 0) {
+          migrated = true;
+          try {
+            const base: Omit<SpectrumData, 'currentVersionId' | 'versions'> = {
+              ...spectrum,
+            } as Omit<SpectrumData, 'currentVersionId' | 'versions'>;
+            return initializeSpectrumWithVersion(base, spectrum.ownerId || 'system');
+          } catch (e) {
+            console.warn('迁移光谱版本失败:', e);
+            return spectrum as SpectrumData;
+          }
+        }
+        return spectrum as SpectrumData;
+      });
+      if (updatedSpectra !== project.data.spectra) {
+        return {
+          ...project,
+          data: {
+            ...project.data,
+            spectra: updatedSpectra,
+          },
+        };
+      }
+      return project;
+    });
+    if (migrated) {
+      console.info('[迁移] 已为旧光谱数据初始化版本信息');
+      void localDB.saveProjects(updatedProjects);
+    }
+    return updatedProjects;
+  }
+
   async loadFromLocal(): Promise<Project[]> {
     try {
       const projects = await localDB.loadProjects();
       if (projects.length > 0) {
-        return projects;
+        return this.migrateProjectVersions(projects);
       }
     } catch (e) {
       console.warn('从本地数据库加载失败:', e);

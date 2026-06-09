@@ -11,6 +11,7 @@ import type {
   SyncDirection,
   WorkspaceState,
   ComparisonModeState,
+  VersionCompareState,
   AlertRuleConfig,
   BeStarAlert,
   AlertEvaluationResult,
@@ -18,6 +19,8 @@ import type {
   ManualClassificationResult,
   VisibilityType,
   SharedClassificationResult,
+  VersionOperationType,
+  SpectrumPoint,
 } from '@/types';
 import { generateSampleSpectrum, SPECTRAL_LINES, MK_TEMPLATES } from '@/data/astronomy';
 import { syncManager } from '@/lib/syncManager';
@@ -27,6 +30,12 @@ import {
   evaluateAllTargets,
   sendInAppNotification,
 } from '@/lib/alertEngine';
+import {
+  initializeSpectrumWithVersion,
+  switchToVersion,
+  rollbackToVersion,
+  applyProcessingWithVersion,
+} from '@/lib/versionManager';
 
 const genId = () => Math.random().toString(36).substring(2, 9);
 
@@ -128,7 +137,7 @@ const createSampleProjectData = (): ProjectData => {
   const sampleTypes = ['O9V', 'A0V', 'A5V', 'B0V', 'G2V', 'K0V', 'M0V'];
   const spectraList: SpectrumData[] = sampleTypes.map((type, idx) => {
     const wlPoints = generateSampleSpectrum(type, 0.015);
-    return {
+    const baseSpectrum = {
       id: genId(),
       name: `样本光谱 ${idx + 1} - ${type}`,
       targetName: idx < 3 ? 'HD 209458' : idx < 5 ? 'Gamma Cas' : 'Vega',
@@ -143,6 +152,7 @@ const createSampleProjectData = (): ProjectData => {
       teamIds: idx < 2 ? [] : undefined,
       sharedClassifications: [],
     };
+    return initializeSpectrumWithVersion(baseSpectrum, user.id);
   });
 
   const obsList: BeStarObservation[] = [];
@@ -231,6 +241,7 @@ const migrateFromLocalStorage = async (): Promise<Project[] | null> => {
       return null;
     }
 
+    const user = getDefaultUser();
     const migrated: Project[] = parsed.projects.map((p) => ({
       id: p.id,
       name: p.name,
@@ -238,7 +249,18 @@ const migrateFromLocalStorage = async (): Promise<Project[] | null> => {
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
       data: {
-        spectra: Array.isArray(p.data?.spectra) ? p.data.spectra : [],
+        spectra: Array.isArray(p.data?.spectra)
+          ? p.data.spectra.map((s: any) => {
+              const baseSpectrum = {
+                visibility: (s.visibility ?? 'private') as any,
+                ownerId: s.ownerId ?? user.id,
+                ownerName: s.ownerName ?? user.name,
+                sharedClassifications: s.sharedClassifications ?? [],
+                ...s,
+              };
+              return initializeSpectrumWithVersion(baseSpectrum, baseSpectrum.ownerId);
+            })
+          : [],
         beObservations: Array.isArray(p.data?.beObservations) ? p.data.beObservations : [],
         observationLogs: Array.isArray((p.data as any)?.observationLogs) ? (p.data as any).observationLogs : [],
         currentSpectrumId: p.data?.currentSpectrumId ?? null,
@@ -281,6 +303,7 @@ interface AppState {
 
   comparisonMode: ComparisonModeState;
   manualTuning: ManualTuningState;
+  versionCompare: VersionCompareState;
 
   syncState: SyncState;
   isInitializing: boolean;
@@ -329,6 +352,20 @@ interface AppState {
   setTuningDeviationThreshold: (threshold: number) => void;
   setTemplateIntensityScale: (scale: number) => void;
   resetManualTuning: () => void;
+
+  switchSpectrumVersion: (spectrumId: string, versionId: string) => void;
+  rollbackSpectrumToVersion: (spectrumId: string, versionId: string) => void;
+  processSpectrumWithVersion: (
+    spectrumId: string,
+    processedPoints: SpectrumPoint[],
+    operation: VersionOperationType,
+    params?: Record<string, number | string | boolean>,
+    description?: string
+  ) => void;
+  toggleVersionCompare: () => void;
+  setVersionCompareA: (versionId: string | null) => void;
+  setVersionCompareB: (versionId: string | null) => void;
+  setVersionCompareSpectrum: (spectrumId: string | null) => void;
 
   updateAlertConfig: (config: Partial<AlertRuleConfig>) => void;
   runAlertEvaluation: () => void;
@@ -415,6 +452,13 @@ export const useAppStore = create<AppState>()(
         lockedResult: null,
       },
 
+      versionCompare: {
+        enabled: false,
+        spectrumId: null,
+        versionAId: null,
+        versionBId: null,
+      },
+
       syncState: initialSyncState,
       isInitializing: false,
       initError: null,
@@ -483,13 +527,17 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           if (!state.currentProjectId) return state;
           const user = getDefaultUser();
-          const enrichedSpectrum: SpectrumData = {
+          const baseSpectrum = {
             visibility: 'private' as VisibilityType,
             ownerId: user.id,
             ownerName: user.name,
             sharedClassifications: [],
             ...spectrum,
           };
+          const enrichedSpectrum: SpectrumData = initializeSpectrumWithVersion(
+            baseSpectrum,
+            user.id
+          );
           const newProjects = updateProjectData(
             state.projects,
             state.currentProjectId,
@@ -786,6 +834,118 @@ export const useAppStore = create<AppState>()(
             subtypeOffset: 0,
             luminosityOffset: 0,
             templateIntensityScale: 1.0,
+          },
+        })),
+
+      switchSpectrumVersion: (spectrumId, versionId) =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const user = getDefaultUser();
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              spectra: data.spectra.map((s) => {
+                if (s.id !== spectrumId) return s;
+                const switched = switchToVersion(s, versionId);
+                return switched ?? s;
+              }),
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
+            ...syncProjectToState(newProjects, state.currentProjectId),
+          };
+        }),
+
+      rollbackSpectrumToVersion: (spectrumId, versionId) =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const user = getDefaultUser();
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              spectra: data.spectra.map((s) => {
+                if (s.id !== spectrumId) return s;
+                const rolledBack = rollbackToVersion(s, versionId, user.id);
+                return rolledBack ?? s;
+              }),
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
+            ...syncProjectToState(newProjects, state.currentProjectId),
+          };
+        }),
+
+      processSpectrumWithVersion: (spectrumId, processedPoints, operation, params = {}, description) =>
+        set((state) => {
+          if (!state.currentProjectId) return state;
+          const user = getDefaultUser();
+          const newProjects = updateProjectData(
+            state.projects,
+            state.currentProjectId,
+            (data) => ({
+              ...data,
+              spectra: data.spectra.map((s) => {
+                if (s.id !== spectrumId) return s;
+                return applyProcessingWithVersion(
+                  s,
+                  processedPoints,
+                  operation,
+                  user.id,
+                  params,
+                  description
+                );
+              }),
+            })
+          );
+          void persistProjects(newProjects);
+          return {
+            projects: newProjects,
+            ...syncProjectToState(newProjects, state.currentProjectId),
+          };
+        }),
+
+      toggleVersionCompare: () =>
+        set((state) => ({
+          versionCompare: {
+            ...state.versionCompare,
+            enabled: !state.versionCompare.enabled,
+          },
+        })),
+
+      setVersionCompareSpectrum: (spectrumId) =>
+        set((state) => {
+          const spectrum = state.spectra.find((s) => s.id === spectrumId);
+          return {
+            versionCompare: {
+              enabled: state.versionCompare.enabled,
+              spectrumId,
+              versionAId: spectrum?.currentVersionId ?? null,
+              versionBId: null,
+            },
+          };
+        }),
+
+      setVersionCompareA: (versionId) =>
+        set((state) => ({
+          versionCompare: {
+            ...state.versionCompare,
+            versionAId: versionId,
+          },
+        })),
+
+      setVersionCompareB: (versionId) =>
+        set((state) => ({
+          versionCompare: {
+            ...state.versionCompare,
+            versionBId: versionId,
           },
         })),
 

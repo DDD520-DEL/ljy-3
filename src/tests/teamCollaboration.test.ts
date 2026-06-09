@@ -11,6 +11,7 @@ import type {
   ManualClassificationResult,
 } from '@/types';
 import { useTeamStore } from '@/store/teamStore';
+import { initializeSpectrumWithVersion } from '@/lib/versionManager';
 
 function assert(condition: boolean, msg: string): void {
   if (!condition) {
@@ -319,7 +320,7 @@ export const testBuildSharedClassification = () => {
 export const testSpectrumDataExtendedFields = () => {
   const { currentUser } = useTeamStore.getState();
 
-  const spectrum: SpectrumData = {
+  const base = {
     id: 'sp-extended',
     name: '测试光谱',
     targetName: '测试目标',
@@ -328,18 +329,22 @@ export const testSpectrumDataExtendedFields = () => {
     wavelengthMax: 7000,
     points: [{ wavelength: 5000, intensity: 1.0 }],
     isNormalized: true,
-    visibility: 'team',
+    visibility: 'team' as VisibilityType,
     ownerId: currentUser.id,
     ownerName: currentUser.name,
     teamIds: ['team-1', 'team-2'],
     sharedClassifications: [],
   };
+  const spectrum: SpectrumData = initializeSpectrumWithVersion(base, currentUser.id);
 
   assert(spectrum.visibility === 'team', 'visibility field present');
   assert(spectrum.ownerId === currentUser.id, 'ownerId field present');
   assert(spectrum.ownerName === currentUser.name, 'ownerName field present');
   assert(spectrum.teamIds?.length === 2, 'teamIds field present with 2 items');
   assert(Array.isArray(spectrum.sharedClassifications), 'sharedClassifications is array');
+  assert(spectrum.currentVersionId !== undefined && spectrum.currentVersionId !== null, 'currentVersionId field present');
+  assert(Array.isArray(spectrum.versions), 'versions is array');
+  assert(spectrum.versions.length >= 1, 'at least one version exists');
 };
 
 export const testSharedClassificationResultStructure = () => {

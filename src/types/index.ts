@@ -146,6 +146,13 @@ export interface ComparisonModeState {
   showDifferenceRegions: boolean;
 }
 
+export interface VersionCompareState {
+  enabled: boolean;
+  spectrumId: string | null;
+  versionAId: string | null;
+  versionBId: string | null;
+}
+
 export interface PendingSyncItem {
   id: string;
   entityType: 'project' | 'spectrum' | 'observation';
@@ -397,6 +404,30 @@ export interface SpectrumObservationMeta {
   rawHeaders?: Record<string, string | number | boolean | null>;
 }
 
+export type VersionOperationType =
+  | 'normalization'
+  | 'wavelength_crop'
+  | 'wavelength_calibration'
+  | 'sky_subtraction'
+  | 'cosmic_ray_removal'
+  | 'manual_edit'
+  | 'import';
+
+export interface SpectrumVersion {
+  id: string;
+  version: number;
+  createdAt: string;
+  createdBy: string;
+  operation: VersionOperationType;
+  description: string;
+  params: Record<string, number | string | boolean>;
+  parentVersionId: string | null;
+  points: SpectrumPoint[];
+  wavelengthMin: number;
+  wavelengthMax: number;
+  isNormalized: boolean;
+}
+
 export interface SpectrumData extends SpectrumObservationMeta {
   id: string;
   name: string;
@@ -411,6 +442,8 @@ export interface SpectrumData extends SpectrumObservationMeta {
   ownerName: string;
   teamIds?: string[];
   sharedClassifications: SharedClassificationResult[];
+  currentVersionId: string;
+  versions: SpectrumVersion[];
 }
 
 export interface TeamInvitation {

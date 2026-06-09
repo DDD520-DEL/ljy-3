@@ -12,14 +12,15 @@ import {
 } from 'chart.js';
 import { SPECTRAL_LINES, MK_TEMPLATES } from '@/data/astronomy';
 import { useAppStore } from '@/store/appStore';
-import type { SpectrumData, ClassificationResult, ResidualPoint, DifferenceRegion, MKTemplate } from '@/types';
+import type { SpectrumData, ClassificationResult, ResidualPoint, DifferenceRegion, MKTemplate, SpectrumVersion } from '@/types';
 import {
   computeResidualsInterpolated,
   findDifferenceRegions,
   generateTemplateSpectrumPoints,
   computeTemplateDeviationRegions,
 } from '@/lib/spectralAnalysis';
-import { Crosshair, Eye, EyeOff, ZoomIn, RotateCcw, GitCompare, AlertTriangle, TrendingUp, Sliders } from 'lucide-react';
+import { getOperationLabel, getVersionSummary, compareVersions } from '@/lib/versionManager';
+import { Crosshair, Eye, EyeOff, ZoomIn, RotateCcw, GitCompare, AlertTriangle, TrendingUp, Sliders, History, ChevronDown, Check, X } from 'lucide-react';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip, Legend);
 
@@ -51,6 +52,7 @@ export default function SpectrumViewer({
   const residualChartRef = useRef<ChartJS<'line'>>(null);
   const [zoom, setZoom] = useState<{ min: number; max: number } | null>(null);
   const [hoverInfo, setHoverInfo] = useState<{ wavelength: number; intensity: number } | null>(null);
+  const [versionDropdownOpen, setVersionDropdownOpen] = useState(false);
 
   const {
     spectra,
@@ -63,6 +65,13 @@ export default function SpectrumViewer({
     toggleShowDifferenceRegions,
     setDifferenceThreshold,
     manualTuning,
+    versionCompare,
+    switchSpectrumVersion,
+    rollbackSpectrumToVersion,
+    toggleVersionCompare,
+    setVersionCompareA,
+    setVersionCompareB,
+    setVersionCompareSpectrum,
   } = useAppStore();
 
   const comparisonSpectra = useMemo<SpectrumData[]>(() => {
@@ -80,6 +89,50 @@ export default function SpectrumViewer({
     .filter((s): s is SpectrumData => s !== undefined);
 
   const visibleLines = SPECTRAL_LINES.filter((l) => visibleLineCategories[l.category]);
+
+  const currentVersion = useMemo<SpectrumVersion | undefined>(() => {
+    if (!currentSpectrum) return undefined;
+    return currentSpectrum.versions.find((v) => v.id === currentSpectrum.currentVersionId);
+  }, [currentSpectrum]);
+
+  const versionCompareData = useMemo(() => {
+    if (!versionCompare.enabled || !versionCompare.spectrumId || !versionCompare.versionAId || !versionCompare.versionBId) {
+      return null;
+    }
+    const spectrum = spectra.find((s) => s.id === versionCompare.spectrumId);
+    if (!spectrum) return null;
+    return compareVersions(spectrum, versionCompare.versionAId, versionCompare.versionBId);
+  }, [versionCompare, spectra]);
+
+  const versionCompareSpectra = useMemo<SpectrumData[]>(() => {
+    if (!versionCompareData || !versionCompareData.versionA || !versionCompareData.versionB) {
+      return [];
+    }
+    const spectrum = spectra.find((s) => s.id === versionCompare.spectrumId);
+    if (!spectrum) return [];
+    return [
+      {
+        ...spectrum,
+        id: `${spectrum.id}-versionA`,
+        name: `${spectrum.name} · v${versionCompareData.versionA.version} (${getOperationLabel(versionCompareData.versionA.operation)})`,
+        points: versionCompareData.versionA.points,
+        wavelengthMin: versionCompareData.versionA.wavelengthMin,
+        wavelengthMax: versionCompareData.versionA.wavelengthMax,
+        isNormalized: versionCompareData.versionA.isNormalized,
+      },
+      {
+        ...spectrum,
+        id: `${spectrum.id}-versionB`,
+        name: `${spectrum.name} · v${versionCompareData.versionB.version} (${getOperationLabel(versionCompareData.versionB.operation)})`,
+        points: versionCompareData.versionB.points,
+        wavelengthMin: versionCompareData.versionB.wavelengthMin,
+        wavelengthMax: versionCompareData.versionB.wavelengthMax,
+        isNormalized: versionCompareData.versionB.isNormalized,
+      },
+    ];
+  }, [versionCompareData, versionCompare.spectrumId, spectra]);
+
+  const isVersionCompareActive = versionCompareSpectra.length >= 2;
 
   const isComparisonActive = comparisonSpectra.length >= 2;
 
@@ -133,6 +186,9 @@ export default function SpectrumViewer({
   const resetZoom = useCallback(() => setZoom(null), []);
 
   const displaySpectra = useMemo(() => {
+    if (isVersionCompareActive) {
+      return versionCompareSpectra;
+    }
     if (isComparisonActive) {
       return comparisonSpectra;
     }
@@ -142,7 +198,7 @@ export default function SpectrumViewer({
       if (!all.find((a) => a.id === s.id)) all.push(s);
     });
     return all;
-  }, [isComparisonActive, comparisonSpectra, currentSpectrum, overlaySpectra]);
+  }, [isVersionCompareActive, versionCompareSpectra, isComparisonActive, comparisonSpectra, currentSpectrum, overlaySpectra]);
 
   const wlRange = useMemo(() => {
     if (displaySpectra.length > 0) {
@@ -513,6 +569,8 @@ export default function SpectrumViewer({
     },
   };
 
+  const versionDropdownRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart || !chart.canvas) return;
@@ -539,12 +597,33 @@ export default function SpectrumViewer({
     };
   }, [chartRef.current]);
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (versionDropdownRef.current && !versionDropdownRef.current.contains(event.target as Node)) {
+        setVersionDropdownOpen(false);
+      }
+    };
+    if (versionDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [versionDropdownOpen]);
+
   const handleZoomIn = () => {
     const span = wlRange.max - wlRange.min;
     setZoom({
       min: wlRange.min + span * 0.2,
       max: wlRange.max - span * 0.2,
     });
+  };
+
+  const handleToggleVersionCompare = () => {
+    if (!versionCompare.enabled && currentSpectrum) {
+      setVersionCompareSpectrum(currentSpectrum.id);
+    }
+    toggleVersionCompare();
   };
 
   if (displaySpectra.length === 0) {
@@ -559,17 +638,85 @@ export default function SpectrumViewer({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex items-center gap-3 text-xs flex-wrap">
           <span className="text-slate-400">
             <Crosshair className="w-3.5 h-3.5 inline mr-1" />
             {hoverInfo
               ? `λ ${hoverInfo.wavelength.toFixed(1)} Å : ${hoverInfo.intensity.toFixed(3)}`
               : '鼠标悬停查看光谱数据'}
           </span>
+          {currentSpectrum && currentVersion && (
+            <div className="relative" ref={versionDropdownRef}>
+              <button
+                onClick={() => setVersionDropdownOpen(!versionDropdownOpen)}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-900/40 text-emerald-300 text-[11px] border border-emerald-700/50 hover:bg-emerald-900/60 transition-colors"
+              >
+                <History className="w-3 h-3" />
+                版本 v{currentVersion.version} · {getOperationLabel(currentVersion.operation)}
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {versionDropdownOpen && (
+                <div className="absolute top-full left-0 mt-1 w-64 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-20 overflow-hidden">
+                  <div className="p-2 border-b border-slate-700">
+                    <div className="text-slate-300 text-xs font-medium">历史版本</div>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {[...currentSpectrum.versions].sort((a, b) => b.version - a.version).map((v) => (
+                      <div
+                        key={v.id}
+                        className={`px-3 py-2 hover:bg-slate-700/50 cursor-pointer flex items-center justify-between gap-2 ${
+                          v.id === currentSpectrum.currentVersionId ? 'bg-emerald-900/30' : ''
+                        }`}
+                        onClick={() => {
+                          if (v.id !== currentSpectrum.currentVersionId) {
+                            switchSpectrumVersion(currentSpectrum.id, v.id);
+                          }
+                          setVersionDropdownOpen(false);
+                        }}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="text-slate-200 text-xs font-medium">
+                            v{v.version} · {getOperationLabel(v.operation)}
+                          </div>
+                          <div className="text-slate-500 text-[10px] truncate">
+                            {v.description} · {new Date(v.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          {v.id === currentSpectrum.currentVersionId && (
+                            <Check className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                          )}
+                          {v.id !== currentSpectrum.currentVersionId && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                rollbackSpectrumToVersion(currentSpectrum.id, v.id);
+                                setVersionDropdownOpen(false);
+                              }}
+                              className="px-1.5 py-0.5 text-[10px] rounded bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
+                              title="回退到此版本（创建新版本）"
+                            >
+                              回退
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           {isComparisonActive && (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cyan-900/40 text-cyan-300 text-[11px] border border-cyan-700/50">
               <GitCompare className="w-3 h-3" />
               对比模式 · {comparisonSpectra.length} 条光谱
+            </span>
+          )}
+          {isVersionCompareActive && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-900/40 text-amber-300 text-[11px] border border-amber-700/50">
+              <History className="w-3 h-3" />
+              版本对比模式
             </span>
           )}
           {manualTuning.enabled && manualTuning.selectedTemplateLabel && (
@@ -586,6 +733,19 @@ export default function SpectrumViewer({
           )}
         </div>
         <div className="flex items-center gap-2">
+          {currentSpectrum && (
+            <button
+              onClick={handleToggleVersionCompare}
+              className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+                versionCompare.enabled
+                  ? 'bg-amber-700/60 text-amber-200 hover:bg-amber-700/80'
+                  : 'bg-slate-700/50 hover:bg-slate-700 text-slate-300'
+              }`}
+              title="版本对比"
+            >
+              <GitCompare className="w-3.5 h-3.5" /> 版本对比
+            </button>
+          )}
           <button
             onClick={handleZoomIn}
             className="flex items-center gap-1 px-2 py-1 rounded bg-slate-700/50 hover:bg-slate-700 text-slate-300 text-xs transition-colors"
@@ -600,6 +760,56 @@ export default function SpectrumViewer({
           </button>
         </div>
       </div>
+
+      {isVersionCompareActive && currentSpectrum && (
+        <div className="flex items-center gap-3 flex-wrap text-xs p-2 rounded-md bg-amber-900/20 border border-amber-800/40">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-800/40 text-amber-200 text-[11px]">
+            <History className="w-3 h-3" />
+            版本对比
+          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400">版本 A:</span>
+            <select
+              value={versionCompare.versionAId || ''}
+              onChange={(e) => setVersionCompareA(e.target.value || null)}
+              className="bg-slate-800 text-slate-300 text-xs rounded border border-slate-600 px-2 py-1 focus:outline-none focus:border-amber-500"
+            >
+              <option value="">-- 选择版本 --</option>
+              {[...currentSpectrum.versions].sort((a, b) => b.version - a.version).map((v) => (
+                <option key={v.id} value={v.id}>
+                  v{v.version} · {getOperationLabel(v.operation)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400">版本 B:</span>
+            <select
+              value={versionCompare.versionBId || ''}
+              onChange={(e) => setVersionCompareB(e.target.value || null)}
+              className="bg-slate-800 text-slate-300 text-xs rounded border border-slate-600 px-2 py-1 focus:outline-none focus:border-amber-500"
+            >
+              <option value="">-- 选择版本 --</option>
+              {[...currentSpectrum.versions].sort((a, b) => b.version - a.version).map((v) => (
+                <option key={v.id} value={v.id}>
+                  v{v.version} · {getOperationLabel(v.operation)}
+                </option>
+              ))}
+            </select>
+          </div>
+          {versionCompareData && versionCompareData.commonPoints.length > 0 && (
+            <span className="text-amber-400 text-[11px]">
+              共同数据点: {versionCompareData.commonPoints.length}
+            </span>
+          )}
+          <button
+            onClick={toggleVersionCompare}
+            className="ml-auto flex items-center gap-1 px-2 py-1 rounded bg-slate-700/50 hover:bg-slate-700 text-slate-400 text-xs transition-colors"
+          >
+            <X className="w-3 h-3" /> 关闭
+          </button>
+        </div>
+      )}
 
       {isComparisonActive && (
         <div className="flex items-center gap-3 flex-wrap text-xs p-2 rounded-md bg-slate-800/50 border border-slate-700/60">
