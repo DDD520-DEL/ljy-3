@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useAppStore } from '@/store/appStore';
+import { useTeamStore } from '@/store/teamStore';
 import {
   FileText,
   Trash2,
@@ -11,6 +12,7 @@ import {
   Layers,
   Eye,
   Settings,
+  ShieldAlert,
 } from 'lucide-react';
 import { VisibilityBadge } from './VisibilitySettings';
 import VisibilitySettings from './VisibilitySettings';
@@ -27,7 +29,15 @@ export default function SpectrumList() {
     clearComparisonSelection,
   } = useAppStore();
 
+  const { canViewSpectrum, currentUser } = useTeamStore();
+
   const [settingsSpectrumId, setSettingsSpectrumId] = useState<string | null>(null);
+
+  const visibleSpectra = useMemo(() => {
+    return spectra.filter((s) => canViewSpectrum(s, currentUser.id));
+  }, [spectra, canViewSpectrum, currentUser.id]);
+
+  const hiddenCount = spectra.length - visibleSpectra.length;
 
   const handleItemClick = (spectrumId: string) => {
     if (comparisonMode.enabled) {
@@ -37,12 +47,24 @@ export default function SpectrumList() {
     }
   };
 
-  const settingsSpectrum = spectra.find((s) => s.id === settingsSpectrumId);
+  const settingsSpectrum = visibleSpectra.find((s) => s.id === settingsSpectrumId);
 
   if (spectra.length === 0) {
     return (
       <div className="p-6 text-center text-sm text-slate-500 rounded-lg bg-slate-800/30 border border-dashed border-slate-700">
         暂无光谱数据
+      </div>
+    );
+  }
+
+  if (visibleSpectra.length === 0) {
+    return (
+      <div className="p-6 text-center rounded-lg bg-slate-800/30 border border-dashed border-slate-700 space-y-2">
+        <ShieldAlert className="w-8 h-8 mx-auto text-slate-500" />
+        <div className="text-sm text-slate-400">暂无可查看的光谱</div>
+        <div className="text-[11px] text-slate-500">
+          {hiddenCount} 条光谱因权限限制不可见
+        </div>
       </div>
     );
   }
@@ -99,8 +121,15 @@ export default function SpectrumList() {
         </div>
       )}
 
+      {hiddenCount > 0 && (
+        <div className="flex items-center gap-1.5 p-2 rounded-md bg-slate-800/40 border border-slate-700/50 text-[11px] text-slate-400">
+          <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0 text-slate-500" />
+          <span>已隐藏 {hiddenCount} 条无权限查看的光谱</span>
+        </div>
+      )}
+
       <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1 scrollbar-thin">
-        {spectra.map((s) => {
+        {visibleSpectra.map((s) => {
           const active = s.id === currentSpectrumId;
           const compareSelected = comparisonMode.selectedSpectrumIds.includes(s.id);
           const compareIndex = comparisonMode.selectedSpectrumIds.indexOf(s.id);

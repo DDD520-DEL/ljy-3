@@ -20,14 +20,33 @@ import SyncStatus from '@/components/SyncStatus';
 import TaskQueuePanel from '@/components/TaskQueuePanel';
 import TeamPanel from '@/components/TeamPanel';
 import { useAppStore } from '@/store/appStore';
+import { useTeamStore } from '@/store/teamStore';
+import { useMemo } from 'react';
 
 type TabType = 'classify' | 'monitor' | 'team' | 'help';
 
 export default function Home() {
   const { spectra, clearAll, beObservations, isInitializing, initError, initializeData } = useAppStore();
+  const { currentUser, canViewSpectrum, teams, getUserTeams } = useTeamStore();
   const [activeTab, setActiveTab] = useState<TabType>('classify');
   const [showInfoOpen, setShowInfoOpen] = useState(false);
   const [showQueue, setShowQueue] = useState(true);
+
+  const userTeams = useMemo(() => getUserTeams(currentUser.id), [getUserTeams, currentUser.id]);
+  const visibleSpectra = useMemo(() => spectra.filter((s) => canViewSpectrum(s, currentUser.id)), [spectra, canViewSpectrum, currentUser.id]);
+  const visibilityStats = useMemo(() => {
+    const stats = { private: 0, team: 0, public: 0 };
+    visibleSpectra.forEach((s) => {
+      if (s.visibility === 'private') stats.private++;
+      else if (s.visibility === 'team') stats.team++;
+      else if (s.visibility === 'public') stats.public++;
+    });
+    return stats;
+  }, [visibleSpectra]);
+  const totalSharedClassifications = useMemo(
+    () => visibleSpectra.reduce((sum, s) => sum + (s.sharedClassifications?.length ?? 0), 0),
+    [visibleSpectra]
+  );
 
   useEffect(() => {
     initializeData();
@@ -188,8 +207,39 @@ export default function Home() {
                 <TeamPanel />
               </section>
             </aside>
-            <div className="lg:col-span-8">
+            <div className="lg:col-span-8 space-y-5">
               <section className="p-5 rounded-xl bg-slate-900/60 border border-slate-800/80 shadow-xl">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                  <div className="p-3 rounded-lg bg-gradient-to-br from-violet-900/40 to-violet-900/20 border border-violet-800/40">
+                    <div className="text-[10px] text-violet-400 font-medium mb-1">我的团队</div>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-2xl font-bold text-violet-300">{userTeams.length}</span>
+                      <span className="text-[10px] text-violet-500">/ {teams.length}</span>
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gradient-to-br from-cyan-900/40 to-cyan-900/20 border border-cyan-800/40">
+                    <div className="text-[10px] text-cyan-400 font-medium mb-1">可见光谱</div>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-2xl font-bold text-cyan-300">{visibleSpectra.length}</span>
+                      <span className="text-[10px] text-cyan-500">/ {spectra.length}</span>
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gradient-to-br from-emerald-900/40 to-emerald-900/20 border border-emerald-800/40">
+                    <div className="text-[10px] text-emerald-400 font-medium mb-1">权限分布</div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-xs font-semibold text-red-400">私{visibilityStats.private}</span>
+                      <span className="text-xs font-semibold text-violet-400">团{visibilityStats.team}</span>
+                      <span className="text-xs font-semibold text-emerald-400">公{visibilityStats.public}</span>
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gradient-to-br from-amber-900/40 to-amber-900/20 border border-amber-800/40">
+                    <div className="text-[10px] text-amber-400 font-medium mb-1">共享分类</div>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-2xl font-bold text-amber-300">{totalSharedClassifications}</span>
+                      <span className="text-[10px] text-amber-500">条</span>
+                    </div>
+                  </div>
+                </div>
                 <div className="space-y-4">
                   <div>
                     <h2 className="text-lg font-bold text-white mb-2 flex items-center gap-2">

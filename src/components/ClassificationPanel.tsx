@@ -4,7 +4,7 @@ import { useTeamStore } from '@/store/teamStore';
 import { classifySpectrum, measureEquivalentWidth, computeLineRatios, WAVELENGTHS, buildEWComparisonTable, getRankedCandidateTemplates, createManualClassification, computeTemplateMatchScoreWithOffsets } from '@/lib/spectralAnalysis';
 import { MK_TEMPLATES } from '@/data/astronomy';
 import type { MKTemplate, SharedClassificationResult } from '@/types';
-import { Sparkles, AlertTriangle, CheckCircle2, Star, Thermometer, Ruler, GitCompare, Table2, Sliders, Lock, Unlock, RotateCcw, Save, UserCircle, Bot, ChevronDown, ChevronUp, Minus, Plus, Users, Clock, Share2 } from 'lucide-react';
+import { Sparkles, AlertTriangle, CheckCircle2, Star, Thermometer, Ruler, GitCompare, Table2, Sliders, Lock, Unlock, RotateCcw, Save, UserCircle, Bot, ChevronDown, ChevronUp, Minus, Plus, Users, Clock, Share2, ShieldAlert } from 'lucide-react';
 
 const SPECTRAL_TYPE_COLORS: Record<string, string> = {
   O: 'from-blue-400 to-blue-600',
@@ -64,7 +64,7 @@ export default function ClassificationPanel() {
     addSharedClassification,
   } = useAppStore();
 
-  const { buildSharedClassification, currentUser } = useTeamStore();
+  const { buildSharedClassification, currentUser, canViewSpectrum } = useTeamStore();
 
   const [showCandidateList, setShowCandidateList] = useState(false);
   const [reviewerNotes, setReviewerNotes] = useState('');
@@ -72,6 +72,9 @@ export default function ClassificationPanel() {
   const [shareOnConfirm, setShareOnConfirm] = useState(true);
 
   const current = spectra.find((s) => s.id === currentSpectrumId);
+
+  const canClassify = current ? canViewSpectrum(current, currentUser.id) : false;
+  const isSpectrumInaccessible = current && !canClassify;
 
   const sharedClassifications = useMemo(() => {
     if (!current?.sharedClassifications) return [] as SharedClassificationResult[];
@@ -176,6 +179,18 @@ export default function ClassificationPanel() {
 
   return (
     <div className="space-y-4">
+      {isSpectrumInaccessible && (
+        <div className="p-3 rounded-lg bg-red-900/20 border border-red-800/50">
+          <div className="flex items-start gap-2 text-[11px] text-red-300">
+            <ShieldAlert className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <div>
+              <div className="font-semibold mb-0.5">无权限访问此光谱</div>
+              <div className="text-red-400/80">该光谱的可见权限未向您开放，无法执行分类操作。请联系光谱所有者或团队管理员。</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
           <Star className="w-4 h-4 text-yellow-400" />
@@ -184,7 +199,7 @@ export default function ClassificationPanel() {
         <div className="flex items-center gap-2">
           <button
             onClick={toggleManualTuning}
-            disabled={!current}
+            disabled={!current || !canClassify}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md font-medium transition-all ${
               manualTuning.enabled
                 ? 'bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white'
@@ -196,7 +211,7 @@ export default function ClassificationPanel() {
           </button>
           <button
             onClick={runClassification}
-            disabled={!current}
+            disabled={!current || !canClassify}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium transition-all"
           >
             <Sparkles className="w-3.5 h-3.5" />
@@ -502,7 +517,7 @@ export default function ClassificationPanel() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleConfirmManualClassification}
-                  disabled={!selectedTemplate}
+                  disabled={!selectedTemplate || !canClassify}
                   className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs rounded-md bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium transition-all"
                 >
                   <Lock className="w-3.5 h-3.5" />

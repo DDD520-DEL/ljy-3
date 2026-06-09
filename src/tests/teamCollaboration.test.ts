@@ -144,44 +144,30 @@ export const testAddMember = () => {
   const { createTeam, addMember, currentUser } = useTeamStore.getState();
   const team = createTeam('成员测试团队');
 
-  const newMember: TeamMember = {
-    userId: 'u-new',
-    userName: '李四',
-    userEmail: 'lisi@example.com',
-    avatarColor: AVATAR_COLORS[1],
-    role: 'member',
-    joinedAt: new Date().toISOString(),
-    invitedBy: currentUser.id,
-  };
+  const newMember = addMember(team.id, '李四', 'lisi@example.com', 'member');
 
-  addMember(team.id, newMember);
+  assert(newMember !== null, 'addMember returns non-null');
+  assert(newMember!.userName === '李四', 'member name preserved');
+  assert(newMember!.userEmail === 'lisi@example.com', 'member email preserved');
+  assert(newMember!.role === 'member', 'member role is member');
 
   const updated = useTeamStore.getState().teams.find((t) => t.id === team.id);
   assert(updated !== undefined, 'team exists');
-  const found = updated!.members.find((m) => m.userId === 'u-new');
+  const found = updated!.members.find((m) => m.userId === newMember!.userId);
   assert(found !== undefined, 'new member found');
-  assert(found!.userName === '李四', 'member name preserved');
-  assert(found!.role === 'member', 'member role is member');
 };
 
 export const testUpdateMemberRole = () => {
   const { createTeam, addMember, updateMemberRole, currentUser } = useTeamStore.getState();
   const team = createTeam('角色测试团队');
 
-  addMember(team.id, {
-    userId: 'u-role',
-    userName: '王五',
-    userEmail: 'wangwu@example.com',
-    avatarColor: AVATAR_COLORS[2],
-    role: 'member',
-    joinedAt: new Date().toISOString(),
-    invitedBy: currentUser.id,
-  });
+  const added = addMember(team.id, '王五', 'wangwu@example.com', 'member');
+  assert(added !== null, 'member added');
 
-  updateMemberRole(team.id, 'u-role', 'admin');
+  updateMemberRole(team.id, added!.userId, 'admin');
 
   const updated = useTeamStore.getState().teams.find((t) => t.id === team.id);
-  const member = updated!.members.find((m) => m.userId === 'u-role');
+  const member = updated!.members.find((m) => m.userId === added!.userId);
   assert(member!.role === 'admin', 'role updated to admin');
 };
 
@@ -189,21 +175,14 @@ export const testRemoveMember = () => {
   const { createTeam, addMember, removeMember, currentUser } = useTeamStore.getState();
   const team = createTeam('移除成员测试');
 
-  addMember(team.id, {
-    userId: 'u-remove',
-    userName: '赵六',
-    userEmail: 'zhaoliu@example.com',
-    avatarColor: AVATAR_COLORS[3],
-    role: 'member',
-    joinedAt: new Date().toISOString(),
-    invitedBy: currentUser.id,
-  });
+  const added = addMember(team.id, '赵六', 'zhaoliu@example.com', 'member');
+  assert(added !== null, 'member added');
 
   const before = useTeamStore.getState().teams.find((t) => t.id === team.id)!.members.length;
-  removeMember(team.id, 'u-remove');
+  removeMember(team.id, added!.userId);
   const after = useTeamStore.getState().teams.find((t) => t.id === team.id)!.members.length;
   assert(after === before - 1, 'member count decreased');
-  const removed = useTeamStore.getState().teams.find((t) => t.id === team.id)!.members.find((m) => m.userId === 'u-remove');
+  const removed = useTeamStore.getState().teams.find((t) => t.id === team.id)!.members.find((m) => m.userId === added!.userId);
   assert(removed === undefined, 'member removed');
 };
 
@@ -280,16 +259,9 @@ export const testCanViewSpectrumTeam = () => {
 
   const team = createTeam('可见性测试团队');
 
-  const memberUserId = 'u-member';
-  addMember(team.id, {
-    userId: memberUserId,
-    userName: '成员',
-    userEmail: 'member@example.com',
-    avatarColor: AVATAR_COLORS[4],
-    role: 'member',
-    joinedAt: new Date().toISOString(),
-    invitedBy: currentUser.id,
-  });
+  const added = addMember(team.id, '成员', 'member@example.com', 'member');
+  assert(added !== null, 'member added');
+  const memberUserId = added!.userId;
 
   const teamSpectrum = {
     id: 'sp-team',
@@ -331,7 +303,7 @@ export const testBuildSharedClassification = () => {
   const manual = makeManualResult();
   const spectrumId = 'sp-test';
 
-  const shared = buildSharedClassification(manual, spectrumId);
+  const shared = buildSharedClassification(spectrumId, manual);
 
   assert(shared.spectrumId === spectrumId, 'spectrumId preserved');
   assert(shared.spectralType === manual.spectralType, 'spectralType preserved');
