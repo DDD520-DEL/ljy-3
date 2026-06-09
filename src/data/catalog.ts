@@ -324,7 +324,8 @@ export const CELESTIAL_CATALOG: CelestialObject[] = [
     dec: 0,
     magnitude: -2.5,
     constellation: '变化',
-    description: '太阳系最大的行星，气态巨行星。',
+    hasDynamicCoords: true,
+    description: '太阳系最大的行星，气态巨行星。坐标根据日期动态计算。',
   },
   {
     id: 'saturn',
@@ -335,7 +336,8 @@ export const CELESTIAL_CATALOG: CelestialObject[] = [
     dec: 0,
     magnitude: 0.5,
     constellation: '变化',
-    description: '以其壮观的光环系统而闻名的气态巨行星。',
+    hasDynamicCoords: true,
+    description: '以其壮观的光环系统而闻名的气态巨行星。坐标根据日期动态计算。',
   },
   {
     id: 'mars',
@@ -346,7 +348,8 @@ export const CELESTIAL_CATALOG: CelestialObject[] = [
     dec: 0,
     magnitude: -1.5,
     constellation: '变化',
-    description: '红色的类地行星，人类探索的重要目标。',
+    hasDynamicCoords: true,
+    description: '红色的类地行星，人类探索的重要目标。坐标根据日期动态计算。',
   },
   {
     id: 'venus',
@@ -357,7 +360,8 @@ export const CELESTIAL_CATALOG: CelestialObject[] = [
     dec: 0,
     magnitude: -4.0,
     constellation: '变化',
-    description: '除太阳和月亮外天空中最亮的天体。',
+    hasDynamicCoords: true,
+    description: '除太阳和月亮外天空中最亮的天体。坐标根据日期动态计算。',
   },
   {
     id: 'mercury',
@@ -368,7 +372,8 @@ export const CELESTIAL_CATALOG: CelestialObject[] = [
     dec: 0,
     magnitude: 0.0,
     constellation: '变化',
-    description: '太阳系中最小、最靠近太阳的行星。',
+    hasDynamicCoords: true,
+    description: '太阳系中最小、最靠近太阳的行星。坐标根据日期动态计算。',
   },
   {
     id: 'moon',

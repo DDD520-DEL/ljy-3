@@ -384,14 +384,172 @@ function getWindowDescription(maxAltitude: number): string {
   return '较差观测条件';
 }
 
+interface PlanetOrbitalElements {
+  a: number;
+  e: number;
+  I: number;
+  L: number;
+  wBar: number;
+  Omega: number;
+  aDot: number;
+  eDot: number;
+  IDot: number;
+  LDot: number;
+  wBarDot: number;
+  OmegaDot: number;
+}
+
+const PLANET_ELEMENTS: Record<string, PlanetOrbitalElements> = {
+  mercury: {
+    a: 0.38709927, e: 0.20563593, I: 7.00497902,
+    L: 252.25032350, wBar: 77.45779628, Omega: 48.33076593,
+    aDot: 0.00000037, eDot: 0.00001906, IDot: -0.00594749,
+    LDot: 149472.67411175, wBarDot: 0.16047689, OmegaDot: -0.12534081,
+  },
+  venus: {
+    a: 0.72333566, e: 0.00677672, I: 3.39467605,
+    L: 181.97909950, wBar: 131.60246718, Omega: 76.67984255,
+    aDot: 0.00000390, eDot: -0.00004107, IDot: -0.00078890,
+    LDot: 58517.81538729, wBarDot: 0.00268329, OmegaDot: -0.27769418,
+  },
+  mars: {
+    a: 1.52371034, e: 0.09339410, I: 1.84969142,
+    L: -4.55343205, wBar: -23.94362959, Omega: 49.55953891,
+    aDot: 0.00001847, eDot: 0.00007882, IDot: -0.00813131,
+    LDot: 19140.30268499, wBarDot: 0.44441088, OmegaDot: -0.29257343,
+  },
+  jupiter: {
+    a: 5.20288700, e: 0.04838624, I: 1.30439695,
+    L: 34.39644051, wBar: 14.72847983, Omega: 100.47390909,
+    aDot: -0.00011607, eDot: -0.00013253, IDot: -0.00183714,
+    LDot: 3034.74612775, wBarDot: 0.21252668, OmegaDot: 0.20469106,
+  },
+  saturn: {
+    a: 9.53667594, e: 0.05386179, I: 2.48599187,
+    L: 49.95424423, wBar: 92.59887831, Omega: 113.66242448,
+    aDot: -0.00125060, eDot: -0.00050991, IDot: 0.00193609,
+    LDot: 1222.49362201, wBarDot: -0.41897216, OmegaDot: -0.28867794,
+  },
+};
+
+function solveKepler(M: number, e: number): number {
+  const eRad = e;
+  let E = M + eRad * Math.sin(M * DEG2RAD);
+  for (let i = 0; i < 30; i++) {
+    const dM = M - (E * RAD2DEG - eRad * Math.sin(E) * RAD2DEG);
+    const dE = dM / (1 - eRad * Math.cos(E));
+    E += dE * DEG2RAD;
+    if (Math.abs(dM) < 1e-8) break;
+  }
+  return E;
+}
+
+function eclipticToEquatorial(lambdaDeg: number, betaDeg: number): { ra: number; dec: number } {
+  const epsilon = 23.43928 * DEG2RAD;
+  const lambda = lambdaDeg * DEG2RAD;
+  const beta = betaDeg * DEG2RAD;
+
+  const cosBeta = Math.cos(beta);
+  const sinBeta = Math.sin(beta);
+  const cosLambda = Math.cos(lambda);
+  const sinLambda = Math.sin(lambda);
+  const cosEpsilon = Math.cos(epsilon);
+  const sinEpsilon = Math.sin(epsilon);
+
+  const x = cosBeta * cosLambda;
+  const y = cosBeta * sinLambda * cosEpsilon - sinBeta * sinEpsilon;
+  const z = cosBeta * sinLambda * sinEpsilon + sinBeta * cosEpsilon;
+
+  let ra = Math.atan2(y, x) * RAD2DEG;
+  const dec = Math.asin(z) * RAD2DEG;
+  ra = normalizeAngle(ra);
+
+  return { ra, dec };
+}
+
+export function calculatePlanetCoordinates(planetId: string, date: Date): { ra: number; dec: number; heliocentricLon: number; heliocentricLat: number; distance: number } {
+  const elements = PLANET_ELEMENTS[planetId];
+  if (!elements) {
+    return { ra: 0, dec: 0, heliocentricLon: 0, heliocentricLat: 0, distance: 0 };
+  }
+
+  const jd = toJulianDate(date);
+  const T = (jd - 2451545.0) / 36525.0;
+  const Tc = T / 100.0;
+
+  const a = elements.a + elements.aDot * Tc;
+  const e = elements.e + elements.eDot * Tc;
+  const I = elements.I + elements.IDot * Tc;
+  const L = normalizeAngle(elements.L + elements.LDot * Tc);
+  const wBar = normalizeAngle(elements.wBar + elements.wBarDot * Tc);
+  const Omega = normalizeAngle(elements.Omega + elements.OmegaDot * Tc);
+
+  const w = normalizeAngle(wBar - Omega);
+  const M = normalizeAngle(L - wBar);
+
+  const E = solveKepler(M, e);
+
+  const xPrime = a * (Math.cos(E * DEG2RAD) - e);
+  const yPrime = a * Math.sqrt(1 - e * e) * Math.sin(E * DEG2RAD);
+
+  const cosW = Math.cos(w * DEG2RAD);
+  const sinW = Math.sin(w * DEG2RAD);
+  const cosOmega = Math.cos(Omega * DEG2RAD);
+  const sinOmega = Math.sin(Omega * DEG2RAD);
+  const cosI = Math.cos(I * DEG2RAD);
+  const sinI = Math.sin(I * DEG2RAD);
+
+  const xHelio = (cosW * cosOmega - sinW * sinOmega * cosI) * xPrime + (-sinW * cosOmega - cosW * sinOmega * cosI) * yPrime;
+  const yHelio = (cosW * sinOmega + sinW * cosOmega * cosI) * xPrime + (-sinW * sinOmega + cosW * cosOmega * cosI) * yPrime;
+  const zHelio = (sinW * sinI) * xPrime + (cosW * sinI) * yPrime;
+
+  const distance = Math.sqrt(xHelio * xHelio + yHelio * yHelio + zHelio * zHelio);
+  let heliocentricLon = Math.atan2(yHelio, xHelio) * RAD2DEG;
+  heliocentricLon = normalizeAngle(heliocentricLon);
+  const heliocentricLat = Math.asin(zHelio / distance) * RAD2DEG;
+
+  const sunLon = normalizeAngle(sunApparentLongitude(T));
+  const sunLat = 0;
+  const sunDistance = 1.00000101778;
+
+  const cosSunLon = Math.cos(sunLon * DEG2RAD);
+  const sinSunLon = Math.sin(sunLon * DEG2RAD);
+  const cosPLon = Math.cos(heliocentricLon * DEG2RAD);
+  const sinPLon = Math.sin(heliocentricLon * DEG2RAD);
+  const cosPLat = Math.cos(heliocentricLat * DEG2RAD);
+  const sinPLat = Math.sin(heliocentricLat * DEG2RAD);
+
+  const xGeo = distance * cosPLat * cosPLon - sunDistance * cosSunLon;
+  const yGeo = distance * cosPLat * sinPLon - sunDistance * sinSunLon;
+  const zGeo = distance * sinPLat;
+
+  let geocentricLon = Math.atan2(yGeo, xGeo) * RAD2DEG;
+  geocentricLon = normalizeAngle(geocentricLon);
+  const geocentricLat = Math.atan2(zGeo, Math.sqrt(xGeo * xGeo + yGeo * yGeo)) * RAD2DEG;
+
+  const { ra, dec } = eclipticToEquatorial(geocentricLon, geocentricLat);
+
+  return { ra, dec, heliocentricLon, heliocentricLat, distance };
+}
+
+export function getEffectiveCoordinates(obj: CelestialObject, date: Date): { ra: number; dec: number; isDynamic: boolean } {
+  if (obj.type === 'planet' && PLANET_ELEMENTS[obj.id]) {
+    const coords = calculatePlanetCoordinates(obj.id, date);
+    return { ra: coords.ra, dec: coords.dec, isDynamic: true };
+  }
+  return { ra: obj.ra, dec: obj.dec, isDynamic: false };
+}
+
 export function calculateEphemeris(
   obj: CelestialObject,
   location: ObserverLocation,
   date: Date = new Date()
 ): EphemerisResult {
+  const { ra, dec } = getEffectiveCoordinates(obj, date);
+
   const { altitude, azimuth, hourAngle } = equatorialToHorizontal(
-    obj.ra,
-    obj.dec,
+    ra,
+    dec,
     location.latitude,
     location.longitude,
     date
@@ -399,15 +557,15 @@ export function calculateEphemeris(
   const airmass = calculateAirmass(altitude);
   const sunTimes = calculateSunTimes(date, location.latitude, location.longitude);
   const riseSetTransit = calculateObjectRiseSetTransit(
-    obj.ra,
-    obj.dec,
+    ra,
+    dec,
     location.latitude,
     location.longitude,
     date
   );
   const observationWindows = calculateObservationWindows(
-    obj.ra,
-    obj.dec,
+    ra,
+    dec,
     location.latitude,
     location.longitude,
     date
@@ -416,14 +574,14 @@ export function calculateEphemeris(
   return {
     object: obj,
     j2000: {
-      ra: obj.ra,
-      dec: obj.dec,
-      raHours: raToHms(obj.ra),
-      decDegrees: decToDms(obj.dec),
+      ra,
+      dec,
+      raHours: raToHms(ra),
+      decDegrees: decToDms(dec),
     },
     apparent: {
-      ra: obj.ra,
-      dec: obj.dec,
+      ra,
+      dec,
       altitude: Math.round(altitude * 10) / 10,
       azimuth: Math.round(azimuth * 10) / 10,
       hourAngle: Math.round(hourAngle * 100) / 100,

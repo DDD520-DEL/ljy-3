@@ -492,6 +492,7 @@ export interface CelestialObject {
   spectralType?: string;
   constellation?: string;
   description?: string;
+  hasDynamicCoords?: boolean;
 }
 
 export interface EquatorialCoordinates {

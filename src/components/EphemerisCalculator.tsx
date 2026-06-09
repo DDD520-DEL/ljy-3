@@ -617,21 +617,26 @@ export default function EphemerisCalculator() {
                   <div>
                     <h3 className="text-xs font-semibold text-slate-300 mb-2 flex items-center gap-1.5">
                       <Compass className="w-3.5 h-3.5 text-violet-400" />
-                      J2000.0 赤道坐标
+                      {result.object.hasDynamicCoords || result.object.type === 'planet' ? '当前赤道坐标（动态计算）' : 'J2000.0 赤道坐标'}
+                      {result.object.hasDynamicCoords && (
+                        <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded bg-violet-700/40 text-violet-200 border border-violet-600/40">
+                          动态
+                        </span>
+                      )}
                     </h3>
                     <div className="p-3 rounded-lg bg-violet-900/20 border border-violet-700/30 space-y-2">
                       <div className="flex justify-between items-center">
                         <span className="text-[11px] text-slate-400">赤经 RA</span>
-                        <span className="text-sm font-mono text-violet-200">{result.j200.raHours}</span>
+                        <span className="text-sm font-mono text-violet-200">{result.j2000.raHours}</span>
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-[11px] text-slate-400">赤纬 Dec</span>
-                        <span className="text-sm font-mono text-violet-200">{result.j200.decDegrees}</span>
+                        <span className="text-sm font-mono text-violet-200">{result.j2000.decDegrees}</span>
                       </div>
                       <div className="flex justify-between items-center border-t border-violet-700/30 pt-2">
                         <span className="text-[11px] text-slate-500">十进制度</span>
                         <span className="text-xs font-mono text-slate-400">
-                          {result.j200.ra.toFixed(4)}°, {result.j200.dec.toFixed(4)}°
+                          {result.j2000.ra.toFixed(4)}°, {result.j2000.dec.toFixed(4)}°
                         </span>
                       </div>
                     </div>
