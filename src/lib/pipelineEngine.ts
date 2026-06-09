@@ -8,7 +8,68 @@ import type {
   TaskStatus,
   ProcessingStepType,
 } from '@/types';
+import type { FitsObservationMetadata } from './fits/types';
 import { processStep, STEP_ORDER, STEP_NAMES, DEFAULT_PIPELINE_CONFIG } from './pipelineSteps';
+
+export interface SpectrumMetadata {
+  targetName?: string;
+  observationDate?: string;
+  observationTime?: string;
+  exposureTime?: number;
+  telescope?: string;
+  instrument?: string;
+  observatory?: string;
+  observer?: string;
+  grating?: string;
+  dispersion?: number;
+  wavelengthPixelSize?: number;
+  centralWavelength?: number;
+  binning?: string;
+  filter?: string;
+  gain?: number;
+  temperature?: number;
+  airmass?: number;
+  ra?: string;
+  dec?: string;
+  jd?: number;
+  mjd?: number;
+  equinox?: number;
+  radialVelocity?: number;
+  resolution?: number;
+  notes?: string;
+  rawHeaders?: Record<string, string | number | boolean | null>;
+}
+
+export function fitsMetadataToSpectrumMeta(fitsMeta: FitsObservationMetadata): SpectrumMetadata {
+  return {
+    targetName: fitsMeta.targetName,
+    observationDate: fitsMeta.observationDate,
+    observationTime: fitsMeta.observationTime,
+    exposureTime: fitsMeta.exposureTime,
+    telescope: fitsMeta.telescope,
+    instrument: fitsMeta.instrument,
+    observatory: fitsMeta.observatory,
+    observer: fitsMeta.observer,
+    grating: fitsMeta.grating,
+    dispersion: fitsMeta.dispersion,
+    wavelengthPixelSize: fitsMeta.wavelengthPixelSize,
+    centralWavelength: fitsMeta.centralWavelength,
+    binning: fitsMeta.binning,
+    filter: fitsMeta.filter,
+    gain: fitsMeta.gain,
+    temperature: fitsMeta.temperature,
+    airmass: fitsMeta.airmass,
+    ra: fitsMeta.ra,
+    dec: fitsMeta.dec,
+    jd: fitsMeta.jd,
+    mjd: fitsMeta.mjd,
+    equinox: fitsMeta.equinox,
+    radialVelocity: fitsMeta.radialVelocity,
+    resolution: fitsMeta.resolution,
+    notes: fitsMeta.notes,
+    rawHeaders: fitsMeta.rawHeaders,
+  };
+}
 
 const genId = () => Math.random().toString(36).substring(2, 9);
 
@@ -23,6 +84,7 @@ class PipelineEngine {
   private pipelineListeners: Set<PipelineListener> = new Set();
   private taskListeners: Set<TaskQueueListener> = new Set();
   private cancelledTasks: Set<string> = new Set();
+  private metadataStore: Map<string, SpectrumMetadata> = new Map();
 
   onPipelineUpdate(listener: PipelineListener): () => void {
     this.pipelineListeners.add(listener);
@@ -46,8 +108,12 @@ class PipelineEngine {
     spectrumId: string,
     spectrumName: string,
     originalPoints: SpectrumPoint[],
-    config: Partial<PipelineConfig> = {}
+    config: Partial<PipelineConfig> = {},
+    metadata?: SpectrumMetadata
   ): ProcessingPipeline {
+    if (metadata) {
+      this.metadataStore.set(spectrumId, metadata);
+    }
     const pipelineId = genId();
     const mergedConfig: PipelineConfig = {
       sky_subtraction: { ...DEFAULT_PIPELINE_CONFIG.sky_subtraction, ...config.sky_subtraction },
@@ -89,11 +155,12 @@ class PipelineEngine {
     spectrumName: string,
     originalPoints: SpectrumPoint[],
     config: Partial<PipelineConfig> = {},
-    spectrumId?: string
+    spectrumId?: string,
+    metadata?: SpectrumMetadata
   ): ProcessingTask {
     const taskId = genId();
     const pid = spectrumId || genId();
-    const pipeline = this.createPipeline(pid, spectrumName, originalPoints, config);
+    const pipeline = this.createPipeline(pid, spectrumName, originalPoints, config, metadata);
 
     const task: ProcessingTask = {
       id: taskId,
@@ -252,11 +319,12 @@ class PipelineEngine {
       pipeline.finalPoints = currentPoints;
       this.notifyPipeline(pipeline);
       const sorted = currentPoints.sort((a, b) => a.wavelength - b.wavelength);
+      const meta = this.metadataStore.get(task.spectrumId);
       return {
         id: task.spectrumId,
         name: task.spectrumName,
-        targetName: 'Unknown',
-        observationDate: new Date().toISOString().split('T')[0],
+        targetName: meta?.targetName || 'Unknown',
+        observationDate: meta?.observationDate || new Date().toISOString().split('T')[0],
         wavelengthMin: sorted[0]?.wavelength ?? 0,
         wavelengthMax: sorted[sorted.length - 1]?.wavelength ?? 0,
         points: sorted,
@@ -314,11 +382,12 @@ class PipelineEngine {
     this.notifyPipeline(pipeline);
 
     const sorted = currentPoints.sort((a, b) => a.wavelength - b.wavelength);
+    const meta = this.metadataStore.get(task.spectrumId);
     return {
       id: task.spectrumId,
       name: task.spectrumName,
-      targetName: 'Unknown',
-      observationDate: new Date().toISOString().split('T')[0],
+      targetName: meta?.targetName || 'Unknown',
+      observationDate: meta?.observationDate || new Date().toISOString().split('T')[0],
       wavelengthMin: sorted[0]?.wavelength ?? 0,
       wavelengthMax: sorted[sorted.length - 1]?.wavelength ?? 0,
       points: sorted,

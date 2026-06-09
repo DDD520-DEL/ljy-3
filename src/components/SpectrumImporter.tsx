@@ -2,9 +2,11 @@ import { useState, useCallback } from 'react';
 import Papa from 'papaparse';
 import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Sparkles, ListTodo } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
-import { pipelineEngine } from '@/lib/pipelineEngine';
+import { pipelineEngine, fitsMetadataToSpectrumMeta } from '@/lib/pipelineEngine';
 import { DEFAULT_PIPELINE_CONFIG } from '@/lib/pipelineSteps';
+import { parseFitsSpectrum } from '@/lib/fits';
 import type { SpectrumPoint } from '@/types';
+import type { SpectrumMetadata } from '@/lib/pipelineEngine';
 
 const genId = () => Math.random().toString(36).substring(2, 9);
 
@@ -12,6 +14,18 @@ interface SpectrumImporterProps {
   showQueueButton?: boolean;
   onToggleQueue?: () => void;
   queueVisible?: boolean;
+}
+
+const SUPPORTED_EXT = ['.csv', '.fits', '.fit', '.fts'];
+
+function isSupportedFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  return SUPPORTED_EXT.some((ext) => lower.endsWith(ext));
+}
+
+function isFitsFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower.endsWith('.fits') || lower.endsWith('.fit') || lower.endsWith('.fts');
 }
 
 export default function SpectrumImporter({
@@ -25,10 +39,59 @@ export default function SpectrumImporter({
   const [success, setSuccess] = useState<string | null>(null);
   const [queuedCount, setQueuedCount] = useState(0);
 
-  const processCSV = useCallback(
-    (file: File) => {
+  const enqueueSpectrum = useCallback(
+    (
+      spectrumName: string,
+      points: SpectrumPoint[],
+      metadata?: SpectrumMetadata
+    ) => {
       setError(null);
       setSuccess(null);
+
+      if (points.length < 10) {
+        setError('无法解析有效光谱数据点（至少需要 10 个）');
+        return;
+      }
+
+      points.sort((a, b) => a.wavelength - b.wavelength);
+
+      const spectrumId = genId();
+
+      const task = pipelineEngine.createTask(
+        spectrumName,
+        points,
+        DEFAULT_PIPELINE_CONFIG,
+        spectrumId,
+        metadata
+      );
+
+      const offTasks = pipelineEngine.onTaskQueueUpdate((tasks) => {
+        const thisTask = tasks.find((t) => t.id === task.id);
+        if (thisTask && thisTask.status === 'completed' && thisTask.result) {
+          addSpectrum(thisTask.result);
+          offTasks();
+          setQueuedCount((c) => Math.max(0, c - 1));
+        } else if (thisTask && (thisTask.status === 'failed' || thisTask.status === 'cancelled')) {
+          offTasks();
+          setQueuedCount((c) => Math.max(0, c - 1));
+          if (thisTask.status === 'failed') {
+            setError(`处理失败: ${thisTask.error || '未知错误'}`);
+          }
+        }
+      });
+
+      setQueuedCount((c) => c + 1);
+      const metaInfo = metadata?.targetName && metadata.targetName !== 'Unknown'
+        ? ` [${metadata.targetName}]`
+        : '';
+      setSuccess(`已加入处理队列: ${spectrumName}${metaInfo} (${points.length} 个数据点)`);
+      setTimeout(() => setSuccess(null), 4000);
+    },
+    [addSpectrum]
+  );
+
+  const processCSV = useCallback(
+    (file: File) => {
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
@@ -56,41 +119,8 @@ export default function SpectrumImporter({
               }
             }
 
-            if (points.length < 10) {
-              setError('无法解析有效光谱数据点，请检查CSV格式');
-              return;
-            }
-
-            points.sort((a, b) => a.wavelength - b.wavelength);
-
             const spectrumName = file.name.replace(/\.[^/.]+$/, '');
-            const spectrumId = genId();
-
-            const task = pipelineEngine.createTask(
-              spectrumName,
-              points,
-              DEFAULT_PIPELINE_CONFIG,
-              spectrumId
-            );
-
-            const offTasks = pipelineEngine.onTaskQueueUpdate((tasks) => {
-              const thisTask = tasks.find((t) => t.id === task.id);
-              if (thisTask && thisTask.status === 'completed' && thisTask.result) {
-                addSpectrum(thisTask.result);
-                offTasks();
-                setQueuedCount((c) => Math.max(0, c - 1));
-              } else if (thisTask && (thisTask.status === 'failed' || thisTask.status === 'cancelled')) {
-                offTasks();
-                setQueuedCount((c) => Math.max(0, c - 1));
-                if (thisTask.status === 'failed') {
-                  setError(`处理失败: ${thisTask.error || '未知错误'}`);
-                }
-              }
-            });
-
-            setQueuedCount((c) => c + 1);
-            setSuccess(`已加入处理队列: ${spectrumName} (${points.length} 个数据点)`);
-            setTimeout(() => setSuccess(null), 3000);
+            enqueueSpectrum(spectrumName, points);
           } catch (e) {
             setError('解析CSV文件时出错: ' + (e as Error).message);
           }
@@ -100,7 +130,36 @@ export default function SpectrumImporter({
         },
       });
     },
-    [addSpectrum]
+    [enqueueSpectrum]
+  );
+
+  const processFITS = useCallback(
+    async (file: File) => {
+      try {
+        const result = await parseFitsSpectrum(file);
+        const spectrumName = file.name.replace(/\.[^/.]+$/, '');
+        const metadata = fitsMetadataToSpectrumMeta(result.metadata);
+        enqueueSpectrum(spectrumName, result.points, metadata);
+      } catch (e) {
+        setError('解析FITS文件时出错: ' + (e as Error).message);
+      }
+    },
+    [enqueueSpectrum]
+  );
+
+  const handleFile = useCallback(
+    (file: File) => {
+      if (!isSupportedFile(file.name)) {
+        setError('不支持的文件格式，请上传 .csv、.fits、.fit 或 .fts 文件');
+        return;
+      }
+      if (isFitsFile(file.name)) {
+        void processFITS(file);
+      } else {
+        processCSV(file);
+      }
+    },
+    [processCSV, processFITS]
   );
 
   const handleDrop = useCallback(
@@ -109,18 +168,10 @@ export default function SpectrumImporter({
       setDragOver(false);
       const files = Array.from(e.dataTransfer.files);
       for (const file of files) {
-        if (file.name.toLowerCase().endsWith('.csv') || file.name.toLowerCase().endsWith('.fits')) {
-          if (file.name.toLowerCase().endsWith('.fits')) {
-            setError('FITS格式需要astrojs库支持，请使用CSV格式或转换数据');
-          } else {
-            processCSV(file);
-          }
-        } else {
-          setError('不支持的文件格式，请上传 .csv 文件');
-        }
+        handleFile(file);
       }
     },
-    [processCSV]
+    [handleFile]
   );
 
   const handleFileSelect = useCallback(
@@ -128,17 +179,12 @@ export default function SpectrumImporter({
       const files = e.target.files;
       if (files) {
         for (let i = 0; i < files.length; i++) {
-          const file = files[i];
-          if (file.name.toLowerCase().endsWith('.csv')) {
-            processCSV(file);
-          } else if (file.name.toLowerCase().endsWith('.fits')) {
-            setError('FITS格式需要专业天文库支持，请先转换为CSV格式');
-          }
+          handleFile(files[i]);
         }
       }
       e.target.value = '';
     },
-    [processCSV]
+    [handleFile]
   );
 
   return (
@@ -160,15 +206,15 @@ export default function SpectrumImporter({
           <Upload className="w-8 h-8 mb-2 text-slate-400" />
           <p className="text-sm font-medium text-slate-300">拖拽光谱文件到此处</p>
           <p className="text-xs text-slate-500 mt-1">
-            支持 CSV（波长,强度）或 FITS 格式
+            支持 CSV（波长,强度）、FITS、FIT、FTS 格式
           </p>
           <p className="text-[10px] text-cyan-400/70 mt-1.5">
-            导入后将自动进入处理流水线
+            FITS 将自动提取目标名称、观测时间等元数据
           </p>
           <input
             type="file"
             multiple
-            accept=".csv,.fits,.fit"
+            accept=".csv,.fits,.fit,.fts"
             className="hidden"
             onChange={handleFileSelect}
           />
