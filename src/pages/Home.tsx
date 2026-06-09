@@ -26,6 +26,7 @@ import EphemerisCalculator from '@/components/EphemerisCalculator';
 import SpectralLineReference from '@/components/SpectralLineReference';
 import FilterSimulator from '@/components/FilterSimulator';
 import StatsDashboard from '@/components/StatsDashboard';
+import SpectrumExportPanel from '@/components/SpectrumExportPanel';
 import { useAppStore } from '@/store/appStore';
 import { useTeamStore } from '@/store/teamStore';
 import { useMemo } from 'react';
@@ -219,6 +220,7 @@ export default function Home() {
                 </h2>
                 <SpectrumList />
               </section>
+              <SpectrumExportPanel />
             </aside>
             <div className="lg:col-span-6 space-y-4">
               <section className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 shadow-xl">
