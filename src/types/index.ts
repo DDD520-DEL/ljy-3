@@ -10,6 +10,19 @@ export interface SpectralLine {
   wavelength: number;
   color: string;
   category: 'hydrogen' | 'helium' | 'metal';
+  transition?: string;
+  ewRangeMin?: number;
+  ewRangeMax?: number;
+  description?: string;
+  periodicGroup?: 'nonmetal' | 'noble_gas' | 'alkali' | 'alkaline_earth' | 'metalloid' | 'transition_metal' | 'post_transition' | 'halogen';
+}
+
+export interface SpectralLineMarker {
+  id: string;
+  wavelength: number;
+  label: string;
+  color: string;
+  line?: SpectralLine;
 }
 
 export interface MKTemplate {

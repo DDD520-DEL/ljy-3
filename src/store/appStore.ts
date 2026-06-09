@@ -21,6 +21,8 @@ import type {
   SharedClassificationResult,
   VersionOperationType,
   SpectrumPoint,
+  SpectralLineMarker,
+  SpectralLine,
 } from '@/types';
 import { generateSampleSpectrum, SPECTRAL_LINES, MK_TEMPLATES } from '@/data/astronomy';
 import { syncManager } from '@/lib/syncManager';
@@ -304,6 +306,7 @@ interface AppState {
   comparisonMode: ComparisonModeState;
   manualTuning: ManualTuningState;
   versionCompare: VersionCompareState;
+  spectralLineMarkers: SpectralLineMarker[];
 
   syncState: SyncState;
   isInitializing: boolean;
@@ -366,6 +369,10 @@ interface AppState {
   setVersionCompareA: (versionId: string | null) => void;
   setVersionCompareB: (versionId: string | null) => void;
   setVersionCompareSpectrum: (spectrumId: string | null) => void;
+
+  addSpectralLineMarker: (line: SpectralLine) => void;
+  removeSpectralLineMarker: (markerId: string) => void;
+  clearSpectralLineMarkers: () => void;
 
   updateAlertConfig: (config: Partial<AlertRuleConfig>) => void;
   runAlertEvaluation: () => void;
@@ -458,6 +465,8 @@ export const useAppStore = create<AppState>()(
         versionAId: null,
         versionBId: null,
       },
+
+      spectralLineMarkers: [],
 
       syncState: initialSyncState,
       isInitializing: false,
@@ -948,6 +957,30 @@ export const useAppStore = create<AppState>()(
             versionBId: versionId,
           },
         })),
+
+      addSpectralLineMarker: (line) =>
+        set((state) => {
+          const existing = state.spectralLineMarkers.find(
+            (m) => m.wavelength === line.wavelength && m.label === line.label
+          );
+          if (existing) return state;
+          const marker: SpectralLineMarker = {
+            id: Math.random().toString(36).substring(2, 11),
+            wavelength: line.wavelength,
+            label: line.label,
+            color: line.color,
+            line,
+          };
+          return { spectralLineMarkers: [...state.spectralLineMarkers, marker] };
+        }),
+
+      removeSpectralLineMarker: (markerId) =>
+        set((state) => ({
+          spectralLineMarkers: state.spectralLineMarkers.filter((m) => m.id !== markerId),
+        })),
+
+      clearSpectralLineMarkers: () =>
+        set(() => ({ spectralLineMarkers: [] })),
 
       toggleLineCategory: (category) =>
         set((state) => ({

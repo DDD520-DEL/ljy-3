@@ -72,6 +72,8 @@ export default function SpectrumViewer({
     setVersionCompareA,
     setVersionCompareB,
     setVersionCompareSpectrum,
+    spectralLineMarkers,
+    removeSpectralLineMarker,
   } = useAppStore();
 
   const comparisonSpectra = useMemo<SpectrumData[]>(() => {
@@ -946,6 +948,42 @@ export default function SpectrumViewer({
                   >
                     {line.label}
                   </span>
+                </div>
+              );
+            })}
+            {spectralLineMarkers.map((marker) => {
+              const dispMin = zoom?.min || wlRange.min;
+              const dispMax = zoom?.max || wlRange.max;
+              if (marker.wavelength < dispMin || marker.wavelength > dispMax) return null;
+              const xPct = ((marker.wavelength - dispMin) / (dispMax - dispMin)) * 100;
+              return (
+                <div
+                  key={marker.id}
+                  className="absolute top-0 bottom-0 flex flex-col items-center pointer-events-auto"
+                  style={{ left: `${xPct}%`, transform: 'translateX(-50%)' }}
+                >
+                  <div
+                    className="w-1 h-full opacity-80 animate-pulse"
+                    style={{ backgroundColor: marker.color }}
+                  />
+                  <div
+                    className="mt-1 px-1.5 py-0.5 rounded text-[10px] font-mono whitespace-nowrap flex items-center gap-1 shadow-lg"
+                    style={{
+                      backgroundColor: marker.color,
+                      color: '#0f172a',
+                      fontWeight: 700,
+                      boxShadow: `0 0 8px ${marker.color}80`,
+                    }}
+                  >
+                    <span>📍 {marker.label}</span>
+                    <button
+                      onClick={() => removeSpectralLineMarker(marker.id)}
+                      className="ml-0.5 hover:bg-black/20 rounded w-3.5 h-3.5 flex items-center justify-center"
+                      title="移除此标记"
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
                 </div>
               );
             })}

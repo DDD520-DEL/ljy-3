@@ -21,6 +21,7 @@ import SyncStatus from '@/components/SyncStatus';
 import TaskQueuePanel from '@/components/TaskQueuePanel';
 import TeamPanel from '@/components/TeamPanel';
 import EphemerisCalculator from '@/components/EphemerisCalculator';
+import SpectralLineReference from '@/components/SpectralLineReference';
 import { useAppStore } from '@/store/appStore';
 import { useTeamStore } from '@/store/teamStore';
 import { useMemo } from 'react';
@@ -199,10 +200,13 @@ export default function Home() {
                 <SpectrumViewer />
               </section>
             </div>
-            <aside className="lg:col-span-3">
-              <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 shadow-xl sticky top-32">
+            <aside className="lg:col-span-3 space-y-4">
+              <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 shadow-xl">
                 <ClassificationPanel />
               </div>
+              <section className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 shadow-xl">
+                <SpectralLineReference />
+              </section>
             </aside>
           </div>
         )}
